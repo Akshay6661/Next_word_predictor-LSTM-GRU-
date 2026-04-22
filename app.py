@@ -95,3 +95,27 @@ print("match_dt   :", sample["match_dt"])
 # Check if subject exists in tracker at all
 print("\nTracker matches on subject:")
 print(df_tracker[df_tracker["subject"] == sample["subject"]][["subject", "received date", "received time"]])
+
+
+
+# ── df_tracker — strip day name then let pandas infer format ──────────────────
+df_tracker["time_clean"] = df_tracker["received time"].str.replace(
+                                r"^[A-Za-z]{3}\s+", "", regex=True
+                           ).str.strip()
+
+# ✅ Remove format= and use infer_datetime_format instead
+df_tracker["match_dt"]   = pd.to_datetime(
+                                df_tracker["received date"].astype(str) + " " + 
+                                df_tracker["time_clean"].astype(str),
+                                infer_datetime_format=True
+                            )
+
+# ── df — same ─────────────────────────────────────────────────────────────────
+df["match_dt"] = pd.to_datetime(
+                    df["date"].astype(str) + " " + df["time"].astype(str),
+                    infer_datetime_format=True
+                 )
+
+# ── Quick check ───────────────────────────────────────────────────────────────
+print("df match_dt         :", df["match_dt"].head(3).tolist())
+print("df_tracker match_dt :", df_tracker["match_dt"].head(3).tolist())
