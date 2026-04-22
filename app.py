@@ -35,24 +35,27 @@ if st.button("Predict Next Word"):
 
 ##new
 
-# ── Step 1: Standardize datetime columns for matching ─────────────────────────
-df["match_dt"]         = pd.to_datetime(df["date"].astype(str) + " " + df["time"].astype(str))
+# ── Step 1: Combine date + time into datetime (same format in both) ────────────
+df["match_dt"]         = pd.to_datetime(df["date"].astype(str)                    + " " + 
+                                         df["time"].astype(str))
 
-df_tracker["match_dt"] = pd.to_datetime(
-                            df_tracker["received date"].astype(str) + " " + 
-                            df_tracker["received time"].astype(str)
-                         )
+df_tracker["match_dt"] = pd.to_datetime(df_tracker["received date"].astype(str)   + " " + 
+                                         df_tracker["received time"].astype(str))
 
-# ── Step 2: Match function ────────────────────────────────────────────────────
+# ── Quick check both parsed correctly ─────────────────────────────────────────
+print("df         :", df["match_dt"].head(3).tolist())
+print("df_tracker :", df_tracker["match_dt"].head(3).tolist())
+
+
 def find_comment(row, df_tracker, time_tolerance_mins=5):
     
-    # Filter tracker by exact subject match first
+    # Exact subject match first
     subject_match = df_tracker[df_tracker["subject"] == row["subject"]]
     
     if subject_match.empty:
         return None
     
-    # Then check date + approx time
+    # Then time difference check
     for _, t_row in subject_match.iterrows():
         time_diff = abs((row["match_dt"] - t_row["match_dt"]).total_seconds() / 60)
         if time_diff <= time_tolerance_mins:
@@ -60,18 +63,26 @@ def find_comment(row, df_tracker, time_tolerance_mins=5):
     
     return None
 
-# ── Step 3: Apply ─────────────────────────────────────────────────────────────
 df["comment"] = df.apply(
     lambda row: find_comment(row, df_tracker, time_tolerance_mins=5), axis=1
 )
 
-# ── Step 4: Match rate ────────────────────────────────────────────────────────
+# ── Match rate ────────────────────────────────────────────────────────────────
 total     = len(df)
 matched   = df["comment"].notna().sum()
 unmatched = df["comment"].isna().sum()
 
 print(f"✅ Total emails : {total}")
-print(f"✅ Matched      : {matched}  ({round(matched/total*100, 1)}%)")
-print(f"⚠️  Unmatched    : {unmatched} ({round(unmatched/total*100, 1)}%)")
+print(f"✅ Matched      : {matched}   ({round(matched/total*100, 1)}%)")
+print(f"⚠️  Unmatched    : {unmatched}  ({round(unmatched/total*100, 1)}%)")
 
 df[["subject", "date", "time", "comment"]].head(10)
+
+# Pick one unmatched email and see why it didn't match
+sample = df[df["comment"].isna()].iloc[0]
+print("Subject    :", sample["subject"])
+print("match_dt   :", sample["match_dt"])
+
+# Check if subject exists in tracker at all
+print("\nTracker matches on subject:")
+print(df_tracker[df_tracker["subject"] == sample["subject"]][["subject", "received date", "received time"]])
