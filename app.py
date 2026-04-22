@@ -182,3 +182,85 @@ print(f"Total Classified : {df['comment'].notna().sum()}")
 print(f"Unclassified     : {df['comment'].isna().sum()}")
 print(f"\n── Class Counts ──────────────────────────────")
 print(class_counts.to_string())
+
+
+
+# ── Separate each class ───────────────────────────────────────────────────────
+df_dsd     = df[df["comment"] == "DSD   Acknowledgement"].copy()
+df_followup= df[df["comment"] == "For Follow up"].copy()
+df_argus   = df[df["comment"] == "Argus ID"].copy()
+
+print(f"DSD Acknowledgement : {len(df_dsd)}")
+print(f"For Follow up       : {len(df_followup)}")
+print(f"Argus ID            : {len(df_argus)}")
+
+from collections import Counter
+import re
+
+def get_top_words(df_class, col="bodyPreview", top_n=30):
+    
+    # Combine all text
+    all_text = " ".join(df_class[col].dropna().tolist()).lower()
+    
+    # Remove common stop words
+    stop_words = {
+        "the","is","in","it","of","and","to","a","an","that","this",
+        "for","on","are","was","with","as","at","be","by","from",
+        "have","has","had","not","but","or","you","we","i","re",
+        "your","our","please","thank","thanks","dear","hi","hello",
+        "regards","mail","email","will","would","could","should"
+    }
+    
+    words = re.findall(r"\b[a-zA-Z]{3,}\b", all_text)
+    words = [w for w in words if w not in stop_words]
+    
+    return Counter(words).most_common(top_n)
+
+print("\n── DSD Acknowledgement Top Words ────────────────")
+print(get_top_words(df_dsd))
+
+print("\n── For Follow Up Top Words ──────────────────────")
+print(get_top_words(df_followup))
+
+print("\n── Argus ID Top Words ───────────────────────────")
+print(get_top_words(df_argus))
+
+def get_top_subjects(df_class, top_n=10):
+    return df_class["subject"].value_counts().head(top_n)
+
+print("\n── DSD Acknowledgement Top Subjects ─────────────")
+print(get_top_subjects(df_dsd))
+
+print("\n── For Follow Up Top Subjects ────────────────────")
+print(get_top_subjects(df_followup))
+
+print("\n── Argus ID Top Subjects ─────────────────────────")
+print(get_top_subjects(df_argus))
+
+
+
+def show_samples(df_class, col="bodyPreview", n=5):
+    samples = df_class[col].dropna().head(n).tolist()
+    for i, s in enumerate(samples):
+        print(f"\n── Sample {i+1} ───────────────────────────────────")
+        print(s[:300])
+
+print("\n═══ DSD Acknowledgement Samples ═════════════════")
+show_samples(df_dsd)
+
+print("\n═══ For Follow Up Samples ════════════════════════")
+show_samples(df_followup)
+
+print("\n═══ Argus ID Samples ═════════════════════════════")
+show_samples(df_argus)
+
+
+
+print("── DSD Acknowledgement Top Senders ──────────────")
+print(df_dsd["sender_email"].value_counts().head(10))
+
+print("\n── For Follow Up Top Senders ─────────────────────")
+print(df_followup["sender_email"].value_counts().head(10))
+
+print("\n── Argus ID Top Senders ──────────────────────────")
+print(df_argus["sender_email"].value_counts().head(10))
