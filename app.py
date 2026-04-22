@@ -333,3 +333,32 @@ print(f"\n── Argus ID ({len(df_argus)} emails) ─────────�
 print(f"   Min frequency : {int(len(df_argus) * 0.3)}")
 for word, count in get_unique_words(counter_argus, df_argus, common_across_all):
     print(f"   {word:<20} {count:>5}  ({round(count/len(df_argus)*100, 1)}%)")
+
+
+
+
+
+
+# ── Check 1: Is bodyPreview populated ─────────────────────────────────────────
+print("DSD bodyPreview null count  :", df_dsd["bodyPreview"].isna().sum())
+print("DSD bodyPreview sample      :", df_dsd["bodyPreview"].iloc[0])
+
+# ── Check 2: Are counters actually populated ──────────────────────────────────
+print("\nTop 10 DSD raw counter:")
+print(counter_dsd.most_common(10))
+
+# ── Check 3: How many words survive common filter ─────────────────────────────
+dsd_after_common = {w: c for w, c in counter_dsd.items() if w not in common_across_all}
+print(f"\nDSD words after removing common : {len(dsd_after_common)}")
+print("Top 10 after common filter:")
+print(sorted(dsd_after_common.items(), key=lambda x: x[1], reverse=True)[:10])
+
+# ── Check 4: What is the min frequency cutting off ────────────────────────────
+min_freq = len(df_dsd) * 0.3
+print(f"\nDSD min frequency threshold : {min_freq}")
+print(f"Max word count in DSD       : {max(dsd_after_common.values()) if dsd_after_common else 0}")
+
+# ── Check 5: Lower threshold to 0 to see anything ────────────────────────────
+print("\nDSD top words with 0 threshold:")
+for word, count in get_unique_words(counter_dsd, df_dsd, common_across_all, threshold_pct=0.0):
+    print(f"   {word:<20} {count:>5}  ({round(count/len(df_dsd)*100, 1)}%)")
