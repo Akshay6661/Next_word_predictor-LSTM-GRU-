@@ -35,28 +35,25 @@ if st.button("Predict Next Word"):
 
 ##new
 
-# ── df — already clean yyyy-mm-dd and HH:MM:SS ────────────────────────────────
+# ── df — use EST date and time columns ────────────────────────────────────────
 df["match_dt"] = pd.to_datetime(
-                    df["date"].astype(str) + " " + df["time"].astype(str),
-                    format="%Y-%m-%d %H:%M:%S"
+                    df["date"].astype(str) + " " + df["time"].astype(str)
                  )
 
-# ── df_tracker — has "2026-04-07" and "Tue 11:58 PM" ─────────────────────────
-# Strip the day name first → "Tue 11:58 PM" → "11:58 PM"
+# ── df_tracker — strip day name and parse 12hr format ────────────────────────
 df_tracker["time_clean"] = df_tracker["received time"].str.replace(
-                                r"^[A-Za-z]{3}\s+", "", regex=True   # remove "Tue "
+                                r"^[A-Za-z]{3}\s+", "", regex=True
                            ).str.strip()
 
-# Now combine and parse → "2026-04-07 11:58 PM"
-df_tracker["match_dt"] = pd.to_datetime(
-                            df_tracker["received date"].astype(str) + " " + 
-                            df_tracker["time_clean"].astype(str),
-                            format="%Y-%m-%d %I:%M %p"              # 12hr format
-                         )
+df_tracker["match_dt"]   = pd.to_datetime(
+                                df_tracker["received date"].astype(str) + " " + 
+                                df_tracker["time_clean"].astype(str),
+                                format="%Y-%m-%d %I:%M %p"
+                            )
 
-# ── Quick check ───────────────────────────────────────────────────────────────
-print("df         :", df["match_dt"].head(3).tolist())
-print("df_tracker :", df_tracker["match_dt"].head(3).tolist())
+# ── Quick check both are now EST and aligned ──────────────────────────────────
+print("df match_dt         :", df["match_dt"].head(3).tolist())
+print("df_tracker match_dt :", df_tracker["match_dt"].head(3).tolist())
 
 
 def find_comment(row, df_tracker, time_tolerance_mins=5):
