@@ -269,6 +269,7 @@ print(df_argus["sender_email"].value_counts().head(10))
 
 
 
+# ── Run this entire cell at once ──────────────────────────────────────────────
 from collections import Counter
 import re
 
@@ -289,54 +290,46 @@ def get_word_counts(df_class, col="bodyPreview"):
     words = [w for w in words if w not in stop_words]
     return Counter(words)
 
-# ── Step 1: Get word counts for each class ────────────────────────────────────
-counter_dsd     = get_word_counts(df_dsd)
-counter_followup= get_word_counts(df_followup)
-counter_argus   = get_word_counts(df_argus)
+# ── Step 1: Build counters ────────────────────────────────────────────────────
+counter_dsd      = get_word_counts(df_dsd)
+counter_followup = get_word_counts(df_followup)
+counter_argus    = get_word_counts(df_argus)
 
-# ── Step 2: Find words common across ALL three classes ────────────────────────
+print("✅ Counters built")
+print(f"   DSD unique words     : {len(counter_dsd)}")
+print(f"   Follow Up unique words: {len(counter_followup)}")
+print(f"   Argus unique words   : {len(counter_argus)}")
+
+# ── Step 2: Common words across all 3 ────────────────────────────────────────
 common_across_all = set(counter_dsd.keys()) & set(counter_followup.keys()) & set(counter_argus.keys())
-print(f"Words appearing in all 3 classes (will be ignored): {len(common_across_all)}")
+print(f"\n✅ Common words ignored : {len(common_across_all)}")
 
-# ── Step 3: Filter function — unique words + frequency threshold ──────────────
+# ── Step 3: Filter function ───────────────────────────────────────────────────
 def get_unique_words(counter, df_class, common_words, threshold_pct=0.3, top_n=20):
-    """
-    counter       : word counter for this class
-    df_class      : the class dataframe
-    common_words  : words to exclude (appear in all classes)
-    threshold_pct : word must appear in at least X% of emails in this class
-    top_n         : return top N words
-    """
-    class_size      = len(df_class)
-    min_frequency   = class_size * threshold_pct   # e.g. 30% of 976 = ~293
+    class_size    = len(df_class)
+    min_frequency = class_size * threshold_pct
 
     filtered = {
         word: count
         for word, count in counter.items()
-        if word not in common_words        # ✅ not in all 3 classes
-        and count >= min_frequency         # ✅ appears in enough emails
+        if word not in common_words
+        and count >= min_frequency
     }
     
-    # Sort by frequency
-    sorted_words = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
-    
-    return sorted_words[:top_n]
+    return sorted(filtered.items(), key=lambda x: x[1], reverse=True)[:top_n]
 
-# ── Step 4: Print unique high frequency words per class ──────────────────────
+# ── Step 4: Print results ─────────────────────────────────────────────────────
 print(f"\n── DSD Acknowledgement ({len(df_dsd)} emails) ────────────────")
-print(f"   Min frequency threshold (30%): {int(len(df_dsd) * 0.3)}")
-dsd_words = get_unique_words(counter_dsd, df_dsd, common_across_all, threshold_pct=0.3)
-for word, count in dsd_words:
-    print(f"   {word:<20} {count:>5}  ({round(count/len(df_dsd)*100, 1)}% of emails)")
+print(f"   Min frequency : {int(len(df_dsd) * 0.3)}")
+for word, count in get_unique_words(counter_dsd, df_dsd, common_across_all):
+    print(f"   {word:<20} {count:>5}  ({round(count/len(df_dsd)*100, 1)}%)")
 
-print(f"\n── For Follow Up ({len(df_followup)} emails) ──────────────────")
-print(f"   Min frequency threshold (30%): {int(len(df_followup) * 0.3)}")
-followup_words = get_unique_words(counter_followup, df_followup, common_across_all, threshold_pct=0.3)
-for word, count in followup_words:
-    print(f"   {word:<20} {count:>5}  ({round(count/len(df_followup)*100, 1)}% of emails)")
+print(f"\n── For Follow Up ({len(df_followup)} emails) ─────────────────")
+print(f"   Min frequency : {int(len(df_followup) * 0.3)}")
+for word, count in get_unique_words(counter_followup, df_followup, common_across_all):
+    print(f"   {word:<20} {count:>5}  ({round(count/len(df_followup)*100, 1)}%)")
 
-print(f"\n── Argus ID ({len(df_argus)} emails) ─────────────────────────")
-print(f"   Min frequency threshold (30%): {int(len(df_argus) * 0.3)}")
-argus_words = get_unique_words(counter_argus, df_argus, common_across_all, threshold_pct=0.3)
-for word, count in argus_words:
-    print(f"   {word:<20} {count:>5}  ({round(count/len(df_argus)*100, 1)}% of emails)")
+print(f"\n── Argus ID ({len(df_argus)} emails) ────────────────────────")
+print(f"   Min frequency : {int(len(df_argus) * 0.3)}")
+for word, count in get_unique_words(counter_argus, df_argus, common_across_all):
+    print(f"   {word:<20} {count:>5}  ({round(count/len(df_argus)*100, 1)}%)")
