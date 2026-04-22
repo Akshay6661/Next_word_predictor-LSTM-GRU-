@@ -119,3 +119,54 @@ df["match_dt"] = pd.to_datetime(
 # ── Quick check ───────────────────────────────────────────────────────────────
 print("df match_dt         :", df["match_dt"].head(3).tolist())
 print("df_tracker match_dt :", df_tracker["match_dt"].head(3).tolist())
+
+
+
+# Check duplicates in tracker side
+print("Tracker duplicate subjects:")
+print(df_tracker[df_tracker.duplicated(subset=["subject"], keep=False)][["subject", "received date", "time_clean"]].head(10))
+
+# Check how many df rows matched same comment
+print("\nComment value counts:")
+print(df["comment"].value_counts().head(10))
+
+
+
+def find_comment(row, df_tracker, time_tolerance_mins=5, matched_indices=set()):
+    
+    subject_match = df_tracker[df_tracker["subject"] == row["subject"]]
+    
+    if subject_match.empty:
+        return None
+    
+    for idx, t_row in subject_match.iterrows():
+        
+        # ✅ Skip already used tracker rows
+        if idx in matched_indices:
+            continue
+        
+        time_diff = abs((row["match_dt"] - t_row["match_dt"]).total_seconds() / 60)
+        if time_diff <= time_tolerance_mins:
+            matched_indices.add(idx)    # ✅ mark as used
+            return t_row["comments"]
+    
+    return None
+
+# ── Reset matched set and re-run ──────────────────────────────────────────────
+matched_indices = set()
+
+df["comment"] = df.apply(
+    lambda row: find_comment(row, df_tracker, time_tolerance_mins=5, matched_indices=matched_indices),
+    axis=1
+)
+
+# ── Match rate ────────────────────────────────────────────────────────────────
+total     = len(df)
+matched   = df["comment"].notna().sum()
+unmatched = df["comment"].isna().sum()
+
+print(f"✅ Total emails    : {total}")
+print(f"✅ Matched         : {matched}   ({round(matched/total*100, 1)}%)")
+print(f"⚠️  Unmatched       : {unmatched}  ({round(unmatched/total*100, 1)}%)")
+print(f"📊 Tracker rows    : {len(df_tracker)}")
+print(f"📊 Unique matched  : {len(matched_indices)}")
