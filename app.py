@@ -170,3 +170,15 @@ print(f"✅ Matched         : {matched}   ({round(matched/total*100, 1)}%)")
 print(f"⚠️  Unmatched       : {unmatched}  ({round(unmatched/total*100, 1)}%)")
 print(f"📊 Tracker rows    : {len(df_tracker)}")
 print(f"📊 Unique matched  : {len(matched_indices)}")
+
+
+
+
+# ── Class distribution ────────────────────────────────────────────────────────
+class_counts = df["comment"].value_counts(dropna=False)
+
+print(f"Total Classes    : {df['comment'].nunique()}")
+print(f"Total Classified : {df['comment'].notna().sum()}")
+print(f"Unclassified     : {df['comment'].isna().sum()}")
+print(f"\n── Class Counts ──────────────────────────────")
+print(class_counts.to_string())
