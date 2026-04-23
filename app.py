@@ -461,18 +461,27 @@ print("────────────────────────�
 
 
 
+import re
+
+# ── Case number pattern : 5 alphabets + 2 digits + hyphen + 4-5 digits ────────
+# Example: CIPSP26-0345, CIEAE26-12345
+CASE_NUMBER_PATTERN = r"[A-Za-z]{5}\d{2}-\d{4,5}"
+
 def extract_pure_body(text):
     if not text or pd.isna(text):
         return ""
     
+    # ── Step 0: Extract and protect case numbers before any cleaning ──────────
+    case_numbers = re.findall(CASE_NUMBER_PATTERN, text)
+    
     # ── Step 1: Remove CAUTION banner ─────────────────────────────────────────
     text = re.sub(
-        r"CAUTION.*?safe\.?",    # everything from CAUTION to "safe"
+        r"CAUTION.*?safe\.?",
         " ",
         text,
         flags=re.IGNORECASE | re.DOTALL
     )
-    
+
     # ── Step 2: Cut at signature indicators ───────────────────────────────────
     signature_patterns = [
         r"(regards|best regards|warm regards|kind regards)",
@@ -526,12 +535,42 @@ def extract_pure_body(text):
     text = re.sub(r"\n{2,}",             "\n", text)
     text = text.strip()
 
+    # ── Step 9: Restore case numbers at the end ───────────────────────────────
+    if case_numbers:
+        text = text + " " + " ".join(case_numbers)
+
     return text
 
-# ── Reapply ───────────────────────────────────────────────────────────────────
+# ── Apply ─────────────────────────────────────────────────────────────────────
 df_actual_body["pure_body"] = df_actual_body["actual_body"].apply(extract_pure_body)
 
-# ── Verify caution banner is gone ────────────────────────────────────────────
-caution_remaining = df_actual_body["pure_body"].str.contains("CAUTION", case=False, na=False).sum()
-print(f"✅ Rows still containing CAUTION : {caution_remaining}")
+# ── Verify case numbers are preserved ────────────────────────────────────────
+df_actual_body["case_numbers"] = df_actual_body["pure_body"].apply(
+    lambda x: re.findall(CASE_NUMBER_PATTERN, x) if pd.notna(x) else []
+)
+
+has_case = df_actual_body["case_numbers"].apply(len) > 0
+
+print(f"✅ Emails with case numbers preserved : {has_case.sum()}")
+print(f"\n── Sample case numbers found ─────────────────────")
+print(df_actual_body[has_case]["case_numbers"].head(10))still containing CAUTION : {caution_remaining}")
 print(f"✅ Filled pure_body              : {(df_actual_body['pure_body'] != '').sum()}")
+
+
+# ── Extract case number from subject ──────────────────────────────────────────
+CASE_NUMBER_PATTERN = r"[A-Za-z]{5}\d{2}-\d{4,5}"
+
+df_actual_body["case_number"] = df_actual_body["subject"].apply(
+    lambda x: re.search(CASE_NUMBER_PATTERN, x).group() if pd.notna(x) and re.search(CASE_NUMBER_PATTERN, x) else None
+)
+
+# ── Verify ────────────────────────────────────────────────────────────────────
+has_case    = df_actual_body["case_number"].notna().sum()
+no_case     = df_actual_body["case_number"].isna().sum()
+
+print(f"✅ Emails with case number    : {has_case}")
+print(f"⚠️  Emails without case number: {no_case}")
+
+# ── Sample check ──────────────────────────────────────────────────────────────
+print("\n── Sample subject vs extracted case number ──────────")
+df_actual_body[df_actual_body["case_number"].notna()][["subject", "case_number"]].head(10)
