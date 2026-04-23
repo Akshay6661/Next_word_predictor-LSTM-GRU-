@@ -457,3 +457,78 @@ print(f"   Filled bodies : {(df_actual_body['actual_body'] != '').sum()}")
 print("\n── Sample Cleaned Body ──────────────────────────────")
 print(df_actual_body["actual_body"].iloc[0][:300])
 print("─────────────────────────────────────────────────────")
+
+
+
+
+import re
+
+def extract_pure_body(text):
+    if not text or pd.isna(text):
+        return ""
+    
+    # ── Step 1: Cut at signature indicators ───────────────────────────────────
+    signature_patterns = [
+        r"(regards|best regards|warm regards|kind regards)",
+        r"(thanks and regards|thank you and regards)",
+        r"(sincerely|yours sincerely|yours faithfully)",
+        r"(thanks|thank you)\s*,?\s*\n",
+        r"(cheers|cordially|respectfully)",
+    ]
+    for pattern in signature_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            text = text[:match.start()].strip()
+            break
+
+    # ── Step 2: Remove From/To/CC/Sent header lines ───────────────────────────
+    text = re.sub(r"from\s*:.*",          "", text, flags=re.IGNORECASE)
+    text = re.sub(r"to\s*:.*",            "", text, flags=re.IGNORECASE)
+    text = re.sub(r"cc\s*:.*",            "", text, flags=re.IGNORECASE)
+    text = re.sub(r"sent\s*:.*",          "", text, flags=re.IGNORECASE)
+    text = re.sub(r"subject\s*:.*",       "", text, flags=re.IGNORECASE)
+    text = re.sub(r"date\s*:.*",          "", text, flags=re.IGNORECASE)
+
+    # ── Step 3: Remove name/title/company signature lines ─────────────────────
+    text = re.sub(r"phone\s*:.*",         "", text, flags=re.IGNORECASE)
+    text = re.sub(r"tel\s*:.*",           "", text, flags=re.IGNORECASE)
+    text = re.sub(r"mob\s*:.*",           "", text, flags=re.IGNORECASE)
+    text = re.sub(r"fax\s*:.*",           "", text, flags=re.IGNORECASE)
+    text = re.sub(r"email\s*:.*",         "", text, flags=re.IGNORECASE)
+    text = re.sub(r"website\s*:.*",       "", text, flags=re.IGNORECASE)
+    text = re.sub(r"www\.\S+",            "", text, flags=re.IGNORECASE)
+    
+    # ── Step 4: Remove phone number patterns ──────────────────────────────────
+    text = re.sub(r"\+?[\d\s\-\(\)]{7,}", " ", text)   # +1-234-567-8900
+
+    # ── Step 5: Remove leftover single lines that look like names/titles ──────
+    # Lines with | separator (common in signatures: "John | Manager | ABC Corp")
+    text = re.sub(r"[^.!?]*\|[^.!?]*",   " ", text)
+
+    # ── Step 6: Remove disclaimer/confidentiality blocks ──────────────────────
+    disclaimer_patterns = [
+        r"this email.*?confidential.*",
+        r"this message.*?intended.*",
+        r"disclaimer.*",
+        r"caution.*?external email.*",
+    ]
+    for pattern in disclaimer_patterns:
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
+
+    # ── Step 7: Final cleanup ─────────────────────────────────────────────────
+    text = re.sub(r"\b[a-zA-Z]{1,2}\b",  " ", text)    # single/double chars
+    text = re.sub(r" {2,}",               " ", text)    # multiple spaces
+    text = re.sub(r"\n{2,}",             "\n", text)    # multiple newlines
+    text = text.strip()
+
+    return text
+
+# ── Apply ─────────────────────────────────────────────────────────────────────
+df_actual_body["pure_body"] = df_actual_body["actual_body"].apply(extract_pure_body)
+
+# ── Compare before and after ──────────────────────────────────────────────────
+sample = df_actual_body[df_actual_body["pure_body"] != ""].iloc[0]
+print("── actual_body ──────────────────────────────────────")
+print(sample["actual_body"][:400])
+print("\n── pure_body (cleaned) ──────────────────────────────")
+print(sample["pure_body"][:400])
