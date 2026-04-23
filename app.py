@@ -553,8 +553,7 @@ has_case = df_actual_body["case_numbers"].apply(len) > 0
 
 print(f"✅ Emails with case numbers preserved : {has_case.sum()}")
 print(f"\n── Sample case numbers found ─────────────────────")
-print(df_actual_body[has_case]["case_numbers"].head(10))still containing CAUTION : {caution_remaining}")
-print(f"✅ Filled pure_body              : {(df_actual_body['pure_body'] != '').sum()}")
+print(df_actual_body[has_case]["case_numbers"].head(10))
 
 
 # ── Extract case number from subject ──────────────────────────────────────────
