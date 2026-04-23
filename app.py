@@ -362,3 +362,45 @@ print(f"Max word count in DSD       : {max(dsd_after_common.values()) if dsd_aft
 print("\nDSD top words with 0 threshold:")
 for word, count in get_unique_words(counter_dsd, df_dsd, common_across_all, threshold_pct=0.0):
     print(f"   {word:<20} {count:>5}  ({round(count/len(df_dsd)*100, 1)}%)")
+
+
+# ── Sort by conversation and reply position ───────────────────────────────────
+df_body = df.sort_values(["conversationId", "reply_position"]).reset_index(drop=True).copy()
+
+def extract_new_content(df_input):
+    
+    df_output = df_input.copy()
+    df_output["actual_body"] = ""
+    
+    for conv_id, group in df_output.groupby("conversationId"):
+        
+        group    = group.sort_values("reply_position")
+        prev_body = ""
+        
+        for idx, row in group.iterrows():
+            
+            current_body = row["body_full"] if pd.notna(row["body_full"]) else ""
+            
+            if row["reply_position"] == 1:
+                df_output.at[idx, "actual_body"] = current_body
+                
+            else:
+                if prev_body:
+                    overlap_pos = current_body.lower().find(prev_body[:100].lower())
+                    if overlap_pos > 0:
+                        df_output.at[idx, "actual_body"] = current_body[:overlap_pos].strip()
+                    else:
+                        df_output.at[idx, "actual_body"] = current_body
+                else:
+                    df_output.at[idx, "actual_body"] = current_body
+            
+            prev_body = current_body
+    
+    return df_output
+
+df_actual_body = extract_new_content(df_body)
+
+print(f"✅ Saved as df_actual_body")
+print(f"   Shape          : {df_actual_body.shape}")
+print(f"   Empty bodies   : {(df_actual_body['actual_body'] == '').sum()}")
+print(f"   Filled bodies  : {(df_actual_body['actual_body'] != '').sum()}")
