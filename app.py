@@ -461,18 +461,11 @@ print("────────────────────────�
 
 
 
-import re
-
-# ── Case number pattern : 5 alphabets + 2 digits + hyphen + 4-5 digits ────────
-# Example: CIPSP26-0345, CIEAE26-12345
 CASE_NUMBER_PATTERN = r"[A-Za-z]{5}\d{2}-\d{4,5}"
 
 def extract_pure_body(text):
     if not text or pd.isna(text):
         return ""
-    
-    # ── Step 0: Extract case numbers before any cleaning ──────────────────────
-    case_numbers = re.findall(CASE_NUMBER_PATTERN, text)
     
     # ── Step 1: Remove CAUTION banner ─────────────────────────────────────────
     text = re.sub(
@@ -534,44 +527,25 @@ def extract_pure_body(text):
     text = re.sub(r"\n{2,}",             "\n", text)
     text = text.strip()
 
-    # ── Step 9: Restore ONLY case numbers that exist in cleaned body ──────────
-    validated_cases = [c for c in case_numbers if c in text]
-    if validated_cases:
-        text = text + " " + " ".join(validated_cases)
-
     return text
 
 
-# ── Reapply ───────────────────────────────────────────────────────────────────
+# ── Apply pure body ───────────────────────────────────────────────────────────
 df_actual_body["pure_body"] = df_actual_body["actual_body"].apply(extract_pure_body)
 
-# ── Extract case number from subject validated against pure_body ──────────────
-def extract_case_from_subject(subject, body):
-    if not subject or pd.isna(subject):
-        return None
-    match = re.search(CASE_NUMBER_PATTERN, subject)
-    if not match:
-        return None
-    case_number = match.group()
-    if pd.notna(body) and case_number in body:
-        return case_number
-    return None
-
-df_actual_body["case_number"] = df_actual_body.apply(
-    lambda row: extract_case_from_subject(row["subject"], row["pure_body"]),
-    axis=1
+# ── Extract case number from subject only ─────────────────────────────────────
+df_actual_body["case_number"] = df_actual_body["subject"].apply(
+    lambda x: re.search(CASE_NUMBER_PATTERN, x).group() 
+              if pd.notna(x) and re.search(CASE_NUMBER_PATTERN, x) 
+              else None
 )
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
-print(f"✅ Pure body filled           : {(df_actual_body['pure_body'] != '').sum()}")
-print(f"✅ Case number in subject AND body : {df_actual_body['case_number'].notna().sum()}")
-print(f"⚠️  Case number not in body        : {df_actual_body['case_number'].isna().sum()}")
+print(f"✅ Pure body filled    : {(df_actual_body['pure_body'] != '').sum()}")
+print(f"✅ With case number    : {df_actual_body['case_number'].notna().sum()}")
+print(f"⚠️  Without case number: {df_actual_body['case_number'].isna().sum()}")
 
-# ── Sample ────────────────────────────────────────────────────────────────────
-df_actual_body[df_actual_body["case_number"].notna()][
-    ["subject", "case_number", "pure_body"]
-].head(5)
-
+df_actual_body[["subject", "case_number", "pure_body"]].head(5)
 # ── Extract case number from subject ──────────────────────────────────────────
 CASE_NUMBER_PATTERN = r"[A-Za-z]{5}\d{2}-\d{4,5}"
 
