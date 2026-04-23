@@ -461,13 +461,19 @@ print("────────────────────────�
 
 
 
-import re
-
 def extract_pure_body(text):
     if not text or pd.isna(text):
         return ""
     
-    # ── Step 1: Cut at signature indicators ───────────────────────────────────
+    # ── Step 1: Remove CAUTION banner ─────────────────────────────────────────
+    text = re.sub(
+        r"CAUTION.*?safe\.?",    # everything from CAUTION to "safe"
+        " ",
+        text,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+    
+    # ── Step 2: Cut at signature indicators ───────────────────────────────────
     signature_patterns = [
         r"(regards|best regards|warm regards|kind regards)",
         r"(thanks and regards|thank you and regards)",
@@ -481,7 +487,7 @@ def extract_pure_body(text):
             text = text[:match.start()].strip()
             break
 
-    # ── Step 2: Remove From/To/CC/Sent header lines ───────────────────────────
+    # ── Step 3: Remove From/To/CC/Sent header lines ───────────────────────────
     text = re.sub(r"from\s*:.*",          "", text, flags=re.IGNORECASE)
     text = re.sub(r"to\s*:.*",            "", text, flags=re.IGNORECASE)
     text = re.sub(r"cc\s*:.*",            "", text, flags=re.IGNORECASE)
@@ -489,7 +495,7 @@ def extract_pure_body(text):
     text = re.sub(r"subject\s*:.*",       "", text, flags=re.IGNORECASE)
     text = re.sub(r"date\s*:.*",          "", text, flags=re.IGNORECASE)
 
-    # ── Step 3: Remove name/title/company signature lines ─────────────────────
+    # ── Step 4: Remove signature lines ────────────────────────────────────────
     text = re.sub(r"phone\s*:.*",         "", text, flags=re.IGNORECASE)
     text = re.sub(r"tel\s*:.*",           "", text, flags=re.IGNORECASE)
     text = re.sub(r"mob\s*:.*",           "", text, flags=re.IGNORECASE)
@@ -497,15 +503,14 @@ def extract_pure_body(text):
     text = re.sub(r"email\s*:.*",         "", text, flags=re.IGNORECASE)
     text = re.sub(r"website\s*:.*",       "", text, flags=re.IGNORECASE)
     text = re.sub(r"www\.\S+",            "", text, flags=re.IGNORECASE)
-    
-    # ── Step 4: Remove phone number patterns ──────────────────────────────────
-    text = re.sub(r"\+?[\d\s\-\(\)]{7,}", " ", text)   # +1-234-567-8900
 
-    # ── Step 5: Remove leftover single lines that look like names/titles ──────
-    # Lines with | separator (common in signatures: "John | Manager | ABC Corp")
+    # ── Step 5: Remove phone numbers ──────────────────────────────────────────
+    text = re.sub(r"\+?[\d\s\-\(\)]{7,}", " ", text)
+
+    # ── Step 6: Remove pipe separated signature lines ─────────────────────────
     text = re.sub(r"[^.!?]*\|[^.!?]*",   " ", text)
 
-    # ── Step 6: Remove disclaimer/confidentiality blocks ──────────────────────
+    # ── Step 7: Remove disclaimer blocks ──────────────────────────────────────
     disclaimer_patterns = [
         r"this email.*?confidential.*",
         r"this message.*?intended.*",
@@ -515,20 +520,18 @@ def extract_pure_body(text):
     for pattern in disclaimer_patterns:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
 
-    # ── Step 7: Final cleanup ─────────────────────────────────────────────────
-    text = re.sub(r"\b[a-zA-Z]{1,2}\b",  " ", text)    # single/double chars
-    text = re.sub(r" {2,}",               " ", text)    # multiple spaces
-    text = re.sub(r"\n{2,}",             "\n", text)    # multiple newlines
+    # ── Step 8: Final cleanup ─────────────────────────────────────────────────
+    text = re.sub(r"\b[a-zA-Z]{1,2}\b",  " ", text)
+    text = re.sub(r" {2,}",               " ", text)
+    text = re.sub(r"\n{2,}",             "\n", text)
     text = text.strip()
 
     return text
 
-# ── Apply ─────────────────────────────────────────────────────────────────────
+# ── Reapply ───────────────────────────────────────────────────────────────────
 df_actual_body["pure_body"] = df_actual_body["actual_body"].apply(extract_pure_body)
 
-# ── Compare before and after ──────────────────────────────────────────────────
-sample = df_actual_body[df_actual_body["pure_body"] != ""].iloc[0]
-print("── actual_body ──────────────────────────────────────")
-print(sample["actual_body"][:400])
-print("\n── pure_body (cleaned) ──────────────────────────────")
-print(sample["pure_body"][:400])
+# ── Verify caution banner is gone ────────────────────────────────────────────
+caution_remaining = df_actual_body["pure_body"].str.contains("CAUTION", case=False, na=False).sum()
+print(f"✅ Rows still containing CAUTION : {caution_remaining}")
+print(f"✅ Filled pure_body              : {(df_actual_body['pure_body'] != '').sum()}")
