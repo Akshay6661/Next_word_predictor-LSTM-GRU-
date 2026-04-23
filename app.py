@@ -404,3 +404,56 @@ print(f"✅ Saved as df_actual_body")
 print(f"   Shape          : {df_actual_body.shape}")
 print(f"   Empty bodies   : {(df_actual_body['actual_body'] == '').sum()}")
 print(f"   Filled bodies  : {(df_actual_body['actual_body'] != '').sum()}")
+
+
+
+
+
+import html
+import re
+
+def clean_actual_body(text):
+    if not text or pd.isna(text):
+        return ""
+    
+    # ── Step 1: Decode HTML entities ──────────────────────────────────────────
+    text = html.unescape(text)                        # &nbsp; &gt; &amp; → actual chars
+    
+    # ── Step 2: Remove remaining HTML tags ────────────────────────────────────
+    text = re.sub(r"<[^>]+>", " ", text)
+    
+    # ── Step 3: Remove specific HTML entities that survived ───────────────────
+    text = re.sub(r"&[a-zA-Z]+;",  " ", text)        # &nbsp; &gt; &lt; &amp;
+    text = re.sub(r"&#[0-9]+;",    " ", text)        # &#160; &#43;
+    text = re.sub(r"&[#a-zA-Z0-9]+;", " ", text)    # catch anything remaining
+    
+    # ── Step 4: Remove special characters and garbage ─────────────────────────
+    text = re.sub(r"[;:<>{}\[\]|\\]", " ", text)    # ; : < > { } [ ]
+    text = re.sub(r"[^\x00-\x7F]+",   " ", text)    # non ASCII characters
+    text = re.sub(r"http\S+",          " ", text)    # URLs
+    text = re.sub(r"\S+@\S+",          " ", text)    # email addresses
+    text = re.sub(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", " ", text)  # emails
+    
+    # ── Step 5: Remove leftover single characters and numbers only tokens ──────
+    text = re.sub(r"\b[a-zA-Z]{1,2}\b", " ", text)  # single/double char words
+    text = re.sub(r"\b[0-9]+\b",        " ", text)  # standalone numbers
+    
+    # ── Step 6: Final whitespace cleanup ──────────────────────────────────────
+    text = re.sub(r"[\t\r\n]+", " ", text)           # tabs and newlines
+    text = re.sub(r" {2,}",     " ", text)           # multiple spaces
+    text = text.strip()
+    
+    return text
+
+# ── Apply to df_actual_body ───────────────────────────────────────────────────
+df_actual_body["actual_body"] = df_actual_body["actual_body"].apply(clean_actual_body)
+
+# ── Quick check ───────────────────────────────────────────────────────────────
+print(f"✅ Cleaned actual_body")
+print(f"   Empty bodies  : {(df_actual_body['actual_body'] == '').sum()}")
+print(f"   Filled bodies : {(df_actual_body['actual_body'] != '').sum()}")
+
+# ── Sample check ──────────────────────────────────────────────────────────────
+print("\n── Sample Cleaned Body ──────────────────────────────")
+print(df_actual_body["actual_body"].iloc[0][:300])
+print("─────────────────────────────────────────────────────")
