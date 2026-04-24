@@ -668,3 +668,37 @@ for word, count in basket_argus:
     overlap = get_overlap(word)
     flag    = "⚠️" if overlap != "unique" else "✅"
     print(f"   {word:<25} {count:>6}  {round(count/len(df_argus)*100, 1):>5}%  {flag} {overlap}")
+
+
+
+##this line is to fetch the data from jan 
+
+import gc
+
+chunks = [
+    ("2026-01-01", "2026-01-31"),
+    ("2026-02-01", "2026-02-28"),
+    ("2026-03-01", "2026-03-31"),
+    ("2026-04-01", "2026-04-20"),
+]
+
+all_chunks = []
+
+for start, end in chunks:
+    print(f"\n📅 Fetching {start} to {end}")
+    df_chunk = fetch_all_emails(start_date=start, end_date=end)
+    all_chunks.append(df_chunk)
+    print(f"✅ Chunk shape: {df_chunk.shape}")
+    gc.collect()
+
+# ── Combine all chunks ─────────────────────────────────────────────────────────
+df_all = pd.concat(all_chunks, ignore_index=True)
+
+# ── Remove duplicates in case of overlap ──────────────────────────────────────
+df_all = df_all.drop_duplicates(subset=["id"]).reset_index(drop=True)
+
+print(f"\n✅ Total emails fetched : {len(df_all)}")
+print(f"✅ Shape                : {df_all.shape}")
+print(f"✅ Columns              : {df_all.columns.tolist()}")
+
+df_all.head()
