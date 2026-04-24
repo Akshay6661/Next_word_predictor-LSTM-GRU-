@@ -563,3 +563,108 @@ print(f"⚠️  Emails without case number: {no_case}")
 # ── Sample check ──────────────────────────────────────────────────────────────
 print("\n── Sample subject vs extracted case number ──────────")
 df_actual_body[df_actual_body["case_number"].notna()][["subject", "case_number"]].head(10)
+
+
+
+#Rebuild Class DataFrames from Clean Data
+
+# ── Use only classified emails ─────────────────────────────────────────────
+df_classified = df_actual_body[df_actual_body["comment"].notna()].copy()
+
+print(f"Total classified emails : {len(df_classified)}")
+print(f"\nClass distribution:")
+print(df_classified["comment"].value_counts())
+
+# ── Separate by class ──────────────────────────────────────────────────────
+df_dsd      = df_classified[df_classified["comment"] == "DSD   Acknowledgement"].copy()
+df_followup = df_classified[df_classified["comment"] == "For Follow up"].copy()
+df_argus    = df_classified[df_classified["comment"] == "Argus ID"].copy()
+
+print(f"\nDSD          : {len(df_dsd)}")
+print(f"Follow Up    : {len(df_followup)}")
+print(f"Argus ID     : {len(df_argus)}")
+
+
+#Build Word Baskets Using Both Subject + Pure Body
+from collections import Counter
+import re
+
+stop_words = {
+    "the","is","in","it","of","and","to","a","an","that","this",
+    "for","on","are","was","with","as","at","be","by","from",
+    "have","has","had","not","but","or","you","we","i","re",
+    "your","our","please","thank","thanks","dear","hi","hello",
+    "regards","mail","email","will","would","could","should",
+    "just","also","get","can","one","all","any","been","when",
+    "they","them","their","there","here","which","more","than",
+    "per","yes","no","ok","sure","noted"
+}
+
+def get_word_counts(df_class, col="pure_body"):
+    all_text = " ".join(
+        (df_class["subject"].fillna("") + " " + df_class[col].fillna("")).tolist()
+    ).lower()
+    words = re.findall(r"\b[a-zA-Z]{3,}\b", all_text)
+    words = [w for w in words if w not in stop_words]
+    return Counter(words)
+
+# ── Build counters ─────────────────────────────────────────────────────────────
+counter_dsd      = get_word_counts(df_dsd)
+counter_followup = get_word_counts(df_followup)
+counter_argus    = get_word_counts(df_argus)
+
+# ── Build basket — no common word removal, just threshold ─────────────────────
+def build_word_basket(counter, df_class, threshold_pct=0.1, top_n=30):
+    """
+    threshold_pct=0.1 → word must appear in at least 10% of class emails
+    No elimination of cross-class words — let overlap show naturally
+    """
+    min_freq = len(df_class) * threshold_pct
+    
+    filtered = {
+        word: count
+        for word, count in counter.items()
+        if count >= min_freq
+    }
+    return sorted(filtered.items(), key=lambda x: x[1], reverse=True)[:top_n]
+
+basket_dsd      = build_word_basket(counter_dsd,      df_dsd,      threshold_pct=0.1)
+basket_followup = build_word_basket(counter_followup, df_followup, threshold_pct=0.1)
+basket_argus    = build_word_basket(counter_argus,    df_argus,    threshold_pct=0.1)
+
+# ── Get word sets for overlap detection ───────────────────────────────────────
+words_dsd      = set(w for w, c in basket_dsd)
+words_followup = set(w for w, c in basket_followup)
+words_argus    = set(w for w, c in basket_argus)
+
+def get_overlap(word):
+    classes = []
+    if word in words_dsd:      classes.append("DSD")
+    if word in words_followup: classes.append("Followup")
+    if word in words_argus:    classes.append("Argus")
+    return ", ".join(classes) if len(classes) > 1 else "unique"
+
+# ── Print baskets with overlap info ───────────────────────────────────────────
+print(f"\n── DSD Acknowledgement Basket ({len(df_dsd)} emails) ────────────")
+print(f"   {'Word':<25} {'Count':>6}  {'%':>6}  {'Overlap'}")
+print(f"   {'─'*60}")
+for word, count in basket_dsd:
+    overlap = get_overlap(word)
+    flag    = "⚠️" if overlap != "unique" else "✅"
+    print(f"   {word:<25} {count:>6}  {round(count/len(df_dsd)*100, 1):>5}%  {flag} {overlap}")
+
+print(f"\n── For Follow Up Basket ({len(df_followup)} emails) ──────────────")
+print(f"   {'Word':<25} {'Count':>6}  {'%':>6}  {'Overlap'}")
+print(f"   {'─'*60}")
+for word, count in basket_followup:
+    overlap = get_overlap(word)
+    flag    = "⚠️" if overlap != "unique" else "✅"
+    print(f"   {word:<25} {count:>6}  {round(count/len(df_followup)*100, 1):>5}%  {flag} {overlap}")
+
+print(f"\n── Argus ID Basket ({len(df_argus)} emails) ──────────────────────")
+print(f"   {'Word':<25} {'Count':>6}  {'%':>6}  {'Overlap'}")
+print(f"   {'─'*60}")
+for word, count in basket_argus:
+    overlap = get_overlap(word)
+    flag    = "⚠️" if overlap != "unique" else "✅"
+    print(f"   {word:<25} {count:>6}  {round(count/len(df_argus)*100, 1):>5}%  {flag} {overlap}")
