@@ -768,3 +768,68 @@ df_all = fetch_all_emails()
 
 df_all = fetch_all_emails(start_date="2026-01-01", end_date="2026-04-20")
 print(f"✅ Total emails : {len(df_all)}")
+
+
+import re
+import html
+
+def extract_actual_body(body_dict):
+    if not body_dict:
+        return ""
+    
+    content = body_dict.get("content", "")
+    
+    # ── Step 1: Remove HTML comments ──────────────────────────────────────────
+    content = re.sub(r"<!--.*?-->", " ", content, flags=re.DOTALL)
+    
+    # ── Step 2: Remove style and script blocks ────────────────────────────────
+    content = re.sub(r"<style.*?>.*?</style>", " ", content, flags=re.DOTALL | re.IGNORECASE)
+    content = re.sub(r"<script.*?>.*?</script>", " ", content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # ── Step 3: Replace block tags with newlines ──────────────────────────────
+    content = re.sub(r"<br\s*/?>", "\n", content, flags=re.IGNORECASE)
+    content = re.sub(r"</p>",      "\n", content, flags=re.IGNORECASE)
+    content = re.sub(r"</div>",    "\n", content, flags=re.IGNORECASE)
+    
+    # ── Step 4: Strip all remaining HTML tags ─────────────────────────────────
+    content = re.sub(r"<[^>]+>", "", content)
+    
+    # ── Step 5: Decode HTML entities ──────────────────────────────────────────
+    content = html.unescape(content)
+    content = re.sub(r"&[a-zA-Z]+;", " ", content)
+    content = re.sub(r"&#\d+;",      " ", content)
+    
+    # ── Step 6: Cut at thread dividers ────────────────────────────────────────
+    thread_dividers = [
+        r"From\s*:\s*.+?Sent\s*:\s*.+?To\s*:",
+        r"On\s+.+?wrote\s*:",
+        r"-{3,}.*?Original Message.*?-{3,}",
+        r"_{3,}",
+        r"-{5,}",
+        r"Sent from my (iPhone|iPad|Outlook|Mail)",
+        r"Get Outlook for (iOS|Android)",
+        r"CAUTION\s*:",
+        r"DISCLAIMER\s*:",
+        r"This email and any attachments",
+        r"This message contains confidential",
+    ]
+    for pattern in thread_dividers:
+        match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
+        if match:
+            content = content[:match.start()].strip()
+            break
+
+    # ── Step 7: Clean garbage characters ──────────────────────────────────────
+    content = re.sub(r"[^\x00-\x7F]+", " ", content)
+    content = re.sub(r"[\t\r]+",        " ", content)
+    content = re.sub(r"\n{3,}",        "\n\n", content)
+    content = re.sub(r" {2,}",          " ", content)
+    content = re.sub(r"[;:]{2,}",       "",  content)
+    content = content.strip()
+    
+    return content if content else ""
+
+
+# ── Now call fetch ─────────────────────────────────────────────────────────────
+df_all = fetch_all_emails(start_date="2026-01-01", end_date="2026-04-20")
+print(f"✅ Total emails : {len(df_all)}")
