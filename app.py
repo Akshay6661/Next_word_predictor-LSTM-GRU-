@@ -673,32 +673,98 @@ for word, count in basket_argus:
 
 ##this line is to fetch the data from jan 
 
-import gc
+def fetch_all_emails(start_date=None, end_date=None):
+    
+    # ── Build filter based on dates provided ──────────────────────────────────
+    if start_date and end_date:
+        start     = f"{start_date}T00:00:00Z"
+        end       = f"{end_date}T23:59:59Z"
+        date_filter = f"&$filter=receivedDateTime ge {start} and receivedDateTime le {end}"
+    elif start_date:
+        start       = f"{start_date}T00:00:00Z"
+        date_filter = f"&$filter=receivedDateTime ge {start}"
+    elif end_date:
+        end         = f"{end_date}T23:59:59Z"
+        date_filter = f"&$filter=receivedDateTime le {end}"
+    else:
+        date_filter = ""   # no filter — fetch all emails
 
-chunks = [
-    ("2026-01-01", "2026-01-31"),
-    ("2026-02-01", "2026-02-28"),
-    ("2026-03-01", "2026-03-31"),
-    ("2026-04-01", "2026-04-20"),
-]
+    url = (
+        f"https://graph.microsoft.com/v1.0/users/{USER_EMAIL}/messages"
+        f"?$select=id,subject,body,bodyPreview,from,toRecipients,receivedDateTime,"
+        f"hasAttachments,conversationId"
+        f"&$top=1000"
+        f"&$orderby=receivedDateTime desc"
+        f"{date_filter}"
+    )
+    
+    emails  = []
+    t_start = time.time()
 
-all_chunks = []
+    while url:
+        resp = requests.get(url, headers=HEADERS, verify=False).json()
+        if "error" in resp:
+            print("❌ API Error:", resp["error"]["message"])
+            break
+        batch = resp.get("value", [])
+        emails.extend(batch)
+        url = resp.get("@odata.nextLink")
 
-for start, end in chunks:
-    print(f"\n📅 Fetching {start} to {end}")
-    df_chunk = fetch_all_emails(start_date=start, end_date=end)
-    all_chunks.append(df_chunk)
-    print(f"✅ Chunk shape: {df_chunk.shape}")
-    gc.collect()
+    elapsed = round(time.time() - t_start, 1)
+    print(f"✅ Fetched {len(emails)} emails in {elapsed}s")
+    
+    df = pd.DataFrame(emails)
+    if df.empty:
+        print("⚠️ No emails found")
+        return df
 
-# ── Combine all chunks ─────────────────────────────────────────────────────────
-df_all = pd.concat(all_chunks, ignore_index=True)
+    df["sender_name"]   = df["from"].apply(lambda x: x["emailAddress"]["name"])
+    df["sender_email"]  = df["from"].apply(lambda x: x["emailAddress"]["address"])
+    df["body_full"]     = df["body"].apply(extract_actual_body)
+    df["to_recipients"] = df["toRecipients"].apply(
+                            lambda x: ", ".join([r["emailAddress"]["address"] for r in x])
+                          )
 
-# ── Remove duplicates in case of overlap ──────────────────────────────────────
-df_all = df_all.drop_duplicates(subset=["id"]).reset_index(drop=True)
+    cols_to_drop = ["@odata.etag", "@odata.type", "from", "body", "toRecipients"]
+    df = df.drop(columns=[col for col in cols_to_drop if col in df.columns])
 
-print(f"\n✅ Total emails fetched : {len(df_all)}")
-print(f"✅ Shape                : {df_all.shape}")
-print(f"✅ Columns              : {df_all.columns.tolist()}")
+    df = df.sort_values(["conversationId", "receivedDateTime"]).reset_index(drop=True)
 
-df_all.head()
+    df["reply_count"]          = df.groupby("conversationId")["id"].transform("count")
+    df["reply_position"]       = df.groupby("conversationId")["receivedDateTime"].rank(method="first").astype(int)
+    df["is_thread"]            = df["reply_count"] > 1
+    df["is_original_email"]    = df["reply_position"] == 1
+    df["thread_started_at"]    = df.groupby("conversationId")["receivedDateTime"].transform("min")
+    df["thread_last_reply_at"] = df.groupby("conversationId")["receivedDateTime"].transform("max")
+    df["all_participants"]     = df.groupby("conversationId")["sender_email"].transform(
+                                    lambda x: ", ".join(x.unique())
+                                 )
+
+    desired_cols = [
+        "conversationId", "is_thread", "reply_count", "reply_position",
+        "is_original_email", "thread_started_at", "thread_last_reply_at",
+        "all_participants", "id", "receivedDateTime", "sender_name",
+        "sender_email", "to_recipients", "subject", "bodyPreview",
+        "body_full", "hasAttachments"
+    ]
+    df = df[[col for col in desired_cols if col in df.columns]]
+
+    print(f"✅ Shape: {df.shape}")
+    return df
+
+# ── Specific date range ────────────────────────────────────────────────────────
+df_all = fetch_all_emails(start_date="2026-01-01", end_date="2026-04-20")
+
+# ── Only start date ───────────────────────────────────────────────────────────
+df_all = fetch_all_emails(start_date="2026-01-01")
+
+# ── Only end date ─────────────────────────────────────────────────────────────
+df_all = fetch_all_emails(end_date="2026-04-20")
+
+# ── No filter — fetch everything ──
+────────────────────────────────────────────
+df_all = fetch_all_emails()
+
+
+df_all = fetch_all_emails(start_date="2026-01-01", end_date="2026-04-20")
+print(f"✅ Total emails : {len(df_all)}")
