@@ -1039,3 +1039,202 @@ print(f"Low    (<0.4) : {(df_unmatched['confidence'] < 0.4).sum()}")
 df_unmatched.to_excel("df_classified_scored.xlsx", index=False)
 print(f"\n✅ Saved to df_classified_scored.xlsx")
 
+
+#classification fucntion based on rule 
+
+# ── Word baskets based on your analysis ───────────────────────────────────────
+
+# Argus ID — single word trigger
+ARGUS_TRIGGER = ["argus"]
+
+# DSD Acknowledgement — single word trigger  
+DSD_TRIGGER = ["acknowledge", "acknowledged", "acknowledgement", "acknowledgment"]
+
+# Follow Up — needs multiple unique word matches
+FOLLOWUP_UNIQUE_WORDS = [
+    "investigation", "batch", "sample", "kindly", "team",
+    "observed", "provide", "patient", "information", "discrepancy",
+    "found", "were"
+]
+
+FOLLOWUP_MIN_MATCHES = 2   # at least 2 unique words must match
+
+# ── Overlap words — used as tiebreaker only, not primary signal ───────────────
+OVERLAP_WORDS = ["colleague", "below", "find", "case", "greetings", "receipt"]
+
+
+def classify_email(row, weighted_basket):
+    
+    subject   = str(row["subject"]).lower()   if pd.notna(row["subject"])    else ""
+    body      = str(row["body_clean"]).lower() if pd.notna(row["body_clean"]) else ""
+    combined  = f"{subject} {body}"
+    words     = set(re.findall(r"\b[a-zA-Z]{3,}\b", combined))
+
+    # ── Rule 1: Argus ID — highest priority ───────────────────────────────────
+    if any(trigger in words for trigger in ARGUS_TRIGGER):
+        return pd.Series({
+            "predicted_class" : "Argus ID",
+            "confidence"      : 0.97,
+            "rule_triggered"  : "argus_trigger",
+            "matched_keywords": str([w for w in ARGUS_TRIGGER if w in words])
+        })
+
+    # ── Rule 2: DSD Acknowledgement ───────────────────────────────────────────
+    if any(trigger in words for trigger in DSD_TRIGGER):
+        return pd.Series({
+            "predicted_class" : "DSD Acknowledgement",
+            "confidence"      : 0.97,
+            "rule_triggered"  : "dsd_trigger",
+            "matched_keywords": str([w for w in DSD_TRIGGER if w in words])
+        })
+
+    # ── Rule 3: Follow Up — needs multiple unique word matches ────────────────
+    followup_hits = [w for w in FOLLOWUP_UNIQUE_WORDS if w in words]
+    
+    if len(followup_hits) >= FOLLOWUP_MIN_MATCHES:
+        
+        # Confidence scales with number of matches
+        # 2 matches = 0.60, 3 = 0.70, 4 = 0.80, 5+ = 0.90+
+        confidence = min(0.50 + (len(followup_hits) * 0.10), 0.99)
+        
+        return pd.Series({
+            "predicted_class" : "For Follow Up",
+            "confidence"      : round(confidence, 2),
+            "rule_triggered"  : f"followup_{len(followup_hits)}_words_matched",
+            "matched_keywords": str(followup_hits)
+        })
+
+    # ── Rule 4: Weak Follow Up signal — 1 unique word + overlap words ─────────
+    overlap_hits  = [w for w in OVERLAP_WORDS if w in words]
+    
+    if len(followup_hits) == 1 and len(overlap_hits) >= 2:
+        return pd.Series({
+            "predicted_class" : "For Follow Up",
+            "confidence"      : 0.45,
+            "rule_triggered"  : "followup_weak_signal",
+            "matched_keywords": str(followup_hits + overlap_hits)
+        })
+
+    # ── Rule 5: Score based fallback using weighted basket ────────────────────
+    scores        = {}
+    matched_words = {}
+    
+    for class_name, basket in weighted_basket.items():
+        score = sum(basket.get(w, 0) for w in words)
+        hits  = [w for w in words if w in basket]
+        scores[class_name]        = round(score, 4)
+        matched_words[class_name] = hits
+
+    if all(s == 0 for s in scores.values()):
+        return pd.Series({
+            "predicted_class" : "Unclassified",
+            "confidence"      : 0.0,
+            "rule_triggered"  : "no_match",
+            "matched_keywords": "[]"
+        })
+
+    top_class  = max(scores, key=scores.get)
+    top_score  = scores[top_class]
+    total      = sum(scores.values())
+    confidence = round(top_score / total, 2) if total > 0 else 0
+
+    return pd.Series({
+        "predicted_class" : top_class if confidence >= 0.4 else "Unclassified",
+        "confidence"      : confidence,
+        "rule_triggered"  : "basket_score_fallback",
+        "matched_keywords": str(matched_words[top_class])
+    })
+
+
+# ── Apply to unmatched emails ─────────────────────────────────────────────────
+df_unmatched[["predicted_class", "confidence",
+              "rule_triggered", "matched_keywords"]] = df_unmatched.apply(
+    lambda row: classify_email(row, weighted_basket), axis=1
+)
+
+# ── Results ───────────────────────────────────────────────────────────────────
+print(f"✅ Classification Results")
+print(f"{'─'*40}")
+print(df_unmatched["predicted_class"].value_counts())
+
+print(f"\n── Confidence Distribution ──────────────────────")
+print(f"High   (> 0.7) : {(df_unmatched['confidence'] >  0.7).sum()}")
+print(f"Medium (0.4-0.7): {((df_unmatched['confidence'] >= 0.4) & (df_unmatched['confidence'] <= 0.7)).sum()}")
+print(f"Low    (< 0.4) : {(df_unmatched['confidence'] <  0.4).sum()}")
+
+print(f"\n── Rule Triggered Breakdown ─────────────────────")
+print(df_unmatched["rule_triggered"].value_counts())
+
+df_unmatched.to_excel("df_classified_scored.xlsx", index=False)
+print(f"\n✅ Saved to df_classified_scored.xlsx")
+
+
+##3 for accuracy score
+# ── Run classifier on already labeled emails ──────────────────────────────────
+df_labeled = df[df["comment"].notna()].copy()
+
+print(f"Total labeled emails : {len(df_labeled)}")
+print(f"Class distribution   :")
+print(df_labeled["comment"].value_counts())
+
+# ── Apply classification ───────────────────────────────────────────────────────
+df_labeled[["predicted_class", "confidence",
+            "rule_triggered", "matched_keywords"]] = df_labeled.apply(
+    lambda row: classify_email(row, weighted_basket), axis=1
+)
+
+# ── Normalize actual comment to match predicted class names ───────────────────
+def normalize_comment(comment):
+    comment = str(comment).strip().lower()
+    if "dsd" in comment:
+        return "DSD Acknowledgement"
+    elif "follow" in comment:
+        return "For Follow Up"
+    elif "argus" in comment:
+        return "Argus ID"
+    else:
+        return comment
+
+df_labeled["actual_class"] = df_labeled["comment"].apply(normalize_comment)
+
+# ── Overall Accuracy ──────────────────────────────────────────────────────────
+correct   = (df_labeled["predicted_class"] == df_labeled["actual_class"]).sum()
+total     = len(df_labeled)
+accuracy  = round(correct / total * 100, 2)
+
+print(f"\n✅ Overall Accuracy : {correct}/{total}  ({accuracy}%)")
+
+# ── Per Class Accuracy ────────────────────────────────────────────────────────
+print(f"\n── Per Class Accuracy ────────────────────────────────────")
+print(f"{'Class':<25} {'Correct':>8} {'Total':>8} {'Accuracy':>10} {'Wrong':>8}")
+print(f"{'─'*65}")
+
+for class_name in df_labeled["actual_class"].unique():
+    class_df   = df_labeled[df_labeled["actual_class"] == class_name]
+    class_correct = (class_df["predicted_class"] == class_name).sum()
+    class_total   = len(class_df)
+    class_acc     = round(class_correct / class_total * 100, 2)
+    class_wrong   = class_total - class_correct
+    flag          = "✅" if class_acc >= 80 else "⚠️" if class_acc >= 60 else "❌"
+    print(f"{class_name:<25} {class_correct:>8} {class_total:>8} {class_acc:>9}%  {class_wrong:>6}  {flag}")
+
+# ── Misclassified Breakdown ───────────────────────────────────────────────────
+print(f"\n── Misclassification Breakdown ───────────────────────────")
+df_wrong = df_labeled[df_labeled["predicted_class"] != df_labeled["actual_class"]]
+
+print(f"Total wrong : {len(df_wrong)}")
+print(f"\nActual → Predicted breakdown:")
+print(df_wrong.groupby(["actual_class", "predicted_class"]).size().reset_index(name="count").to_string(index=False))
+
+# ── Rule Triggered Breakdown per class ────────────────────────────────────────
+print(f"\n── Rule Triggered per Class ──────────────────────────────")
+print(df_labeled.groupby(["actual_class", "rule_triggered"]).size().reset_index(name="count").to_string(index=False))
+
+# ── Unclassified Breakdown ────────────────────────────────────────────────────
+df_unclassified = df_labeled[df_labeled["predicted_class"] == "Unclassified"]
+print(f"\n── Unclassified by Actual Class ──────────────────────────")
+print(df_unclassified["actual_class"].value_counts())
+
+# ── Save for inspection ───────────────────────────────────────────────────────
+df_labeled.to_excel("accuracy_check.xlsx", index=False)
+print(f"\n✅ Saved to accuracy_check.xlsx")
