@@ -833,3 +833,209 @@ def extract_actual_body(body_dict):
 # ── Now call fetch ─────────────────────────────────────────────────────────────
 df_all = fetch_all_emails(start_date="2026-01-01", end_date="2026-04-20")
 print(f"✅ Total emails : {len(df_all)}")
+
+
+
+#Dynamic Word Basket Scoring Engine
+
+from collections import Counter
+import re
+
+stop_words = {
+    "the","is","in","it","of","and","to","a","an","that","this",
+    "for","on","are","was","with","as","at","be","by","from",
+    "have","has","had","not","but","or","you","we","i","re",
+    "your","our","please","thank","thanks","dear","hi","hello",
+    "regards","mail","email","will","would","could","should",
+    "just","also","get","can","one","all","any","been","when",
+    "they","them","their","there","here","which","more","than",
+    "per","yes","no","ok","sure","noted","use","used","using"
+}
+
+# ── Step 1: Build classified dataset ──────────────────────────────────────────
+df_classified = df[df["comment"].notna()].copy()
+print(f"Total classified emails : {len(df_classified)}")
+print(df_classified["comment"].value_counts())
+
+# ── Step 2: Separate classes ───────────────────────────────────────────────────
+df_dsd      = df_classified[df_classified["comment"].str.contains("DSD",    case=False, na=False)]
+df_followup = df_classified[df_classified["comment"].str.contains("Follow", case=False, na=False)]
+df_argus    = df_classified[df_classified["comment"].str.contains("Argus",  case=False, na=False)]
+
+# ── Step 3: Word counter per class ────────────────────────────────────────────
+def get_word_counts(df_class, col="body_clean"):
+    all_text = " ".join(
+        (df_class["subject"].fillna("") + " " + df_class[col].fillna("")).tolist()
+    ).lower()
+    words = re.findall(r"\b[a-zA-Z]{3,}\b", all_text)
+    words = [w for w in words if w not in stop_words]
+    return Counter(words)
+
+counter_dsd      = get_word_counts(df_dsd)
+counter_followup = get_word_counts(df_followup)
+counter_argus    = get_word_counts(df_argus)
+
+print(f"\n✅ Counters built")
+print(f"   DSD unique words      : {len(counter_dsd)}")
+print(f"   Follow Up unique words : {len(counter_followup)}")
+print(f"   Argus unique words     : {len(counter_argus)}")
+
+# ── Step 4: Build weighted basket ─────────────────────────────────────────────
+def build_weighted_basket(counters, class_sizes, threshold_pct=0.05):
+    """
+    counters    : dict of {class_name: Counter}
+    class_sizes : dict of {class_name: int}
+    threshold   : min frequency % to include word
+    
+    Weight logic:
+    - Word in 1 class only  → weight = 1.0  (unique)
+    - Word in 2 classes     → weight = 0.5  (shared)
+    - Word in 3 classes     → weight = 0.2  (common)
+    - Multiplied by frequency % for final weight
+    """
+    
+    all_classes = list(counters.keys())
+    basket      = {}   # {class: {word: weight}}
+    
+    # Collect all unique words across all classes
+    all_words = set()
+    for counter in counters.values():
+        all_words.update(counter.keys())
+    
+    for word in all_words:
+        
+        # How many classes contain this word above threshold
+        classes_with_word = []
+        for class_name, counter in counters.items():
+            freq_pct = counter[word] / class_sizes[class_name]
+            if freq_pct >= threshold_pct:
+                classes_with_word.append((class_name, freq_pct))
+        
+        if not classes_with_word:
+            continue
+        
+        # Overlap penalty
+        overlap_count = len(classes_with_word)
+        if overlap_count == 1:
+            overlap_weight = 1.0    # unique   → full weight
+        elif overlap_count == 2:
+            overlap_weight = 0.5    # shared   → half weight
+        else:
+            overlap_weight = 0.2    # common   → low weight
+        
+        # Assign weighted score to each class
+        for class_name, freq_pct in classes_with_word:
+            if class_name not in basket:
+                basket[class_name] = {}
+            
+            # Final weight = overlap weight × frequency %
+            final_weight = round(overlap_weight * freq_pct, 4)
+            basket[class_name][word] = final_weight
+    
+    return basket
+
+# ── Define classes and sizes ───────────────────────────────────────────────────
+counters = {
+    "DSD Acknowledgement" : counter_dsd,
+    "For Follow Up"       : counter_followup,
+    "Argus ID"            : counter_argus
+}
+
+class_sizes = {
+    "DSD Acknowledgement" : len(df_dsd),
+    "For Follow Up"       : len(df_followup),
+    "Argus ID"            : len(df_argus)
+}
+
+weighted_basket = build_weighted_basket(counters, class_sizes, threshold_pct=0.05)
+
+# ── Print basket summary ───────────────────────────────────────────────────────
+for class_name, words in weighted_basket.items():
+    print(f"\n── {class_name} ({'─'*30})")
+    print(f"   Total words in basket : {len(words)}")
+    
+    # Show top 20 by weight
+    top_words = sorted(words.items(), key=lambda x: x[1], reverse=True)[:20]
+    print(f"   {'Word':<25} {'Weight':>8}")
+    print(f"   {'─'*35}")
+    for word, weight in top_words:
+        unique = "✅" if weight >= 0.5 else "⚠️"
+        print(f"   {word:<25} {weight:>8.4f}  {unique}")
+
+
+#Step 5 — Scoring Engine
+
+def score_email(text, subject, weighted_basket):
+    """
+    Score an email against each class basket
+    Returns predicted class, scores and confidence
+    """
+    if not text:
+        text = ""
+    
+    combined = f"{subject} {text}".lower()
+    words    = set(re.findall(r"\b[a-zA-Z]{3,}\b", combined))
+    words    = {w for w in words if w not in stop_words}
+    
+    scores = {}
+    matched_words = {}
+    
+    for class_name, basket in weighted_basket.items():
+        score = 0
+        hits  = []
+        
+        for word in words:
+            if word in basket:
+                score += basket[word]
+                hits.append((word, basket[word]))
+        
+        scores[class_name]        = round(score, 4)
+        matched_words[class_name] = sorted(hits, key=lambda x: x[1], reverse=True)[:5]
+    
+    # ── Determine predicted class ──────────────────────────────────────────────
+    if all(s == 0 for s in scores.values()):
+        return "Unclassified", 0.0, scores, {}
+    
+    sorted_scores  = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    top_class      = sorted_scores[0][0]
+    top_score      = sorted_scores[0][1]
+    second_score   = sorted_scores[1][1] if len(sorted_scores) > 1 else 0
+    
+    # Confidence = gap between top and second class
+    total          = sum(scores.values())
+    confidence     = round(top_score / total, 4) if total > 0 else 0
+    
+    return top_class, confidence, scores, matched_words[top_class]
+
+
+# ── Step 6: Apply to unmatched emails ─────────────────────────────────────────
+def classify_row(row):
+    predicted, confidence, scores, keywords = score_email(
+        row["body_clean"], row["subject"], weighted_basket
+    )
+    return pd.Series({
+        "predicted_class" : predicted,
+        "confidence"      : confidence,
+        "score_dsd"       : scores.get("DSD Acknowledgement", 0),
+        "score_followup"  : scores.get("For Follow Up", 0),
+        "score_argus"     : scores.get("Argus ID", 0),
+        "matched_keywords": str([w for w, s in keywords])
+    })
+
+df_unmatched[["predicted_class", "confidence",
+              "score_dsd", "score_followup", 
+              "score_argus", "matched_keywords"]] = df_unmatched.apply(classify_row, axis=1)
+
+# ── Step 7: Results ───────────────────────────────────────────────────────────
+print(f"\n✅ Classification Results")
+print(f"{'─'*40}")
+print(df_unmatched["predicted_class"].value_counts())
+
+print(f"\n── Confidence Distribution ──────────────────")
+print(f"High   (>0.7) : {(df_unmatched['confidence'] > 0.7).sum()}")
+print(f"Medium (0.4-0.7): {((df_unmatched['confidence'] >= 0.4) & (df_unmatched['confidence'] <= 0.7)).sum()}")
+print(f"Low    (<0.4) : {(df_unmatched['confidence'] < 0.4).sum()}")
+
+df_unmatched.to_excel("df_classified_scored.xlsx", index=False)
+print(f"\n✅ Saved to df_classified_scored.xlsx")
+
