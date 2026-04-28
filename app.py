@@ -608,6 +608,8 @@ def get_word_counts(df_class, col="pure_body"):
     words = [w for w in words if w not in stop_words]
     return Counter(words)
 
+
+
 # ── Build counters ─────────────────────────────────────────────────────────────
 counter_dsd      = get_word_counts(df_dsd)
 counter_followup = get_word_counts(df_followup)
@@ -1238,3 +1240,71 @@ print(df_unclassified["actual_class"].value_counts())
 # ── Save for inspection ───────────────────────────────────────────────────────
 df_labeled.to_excel("accuracy_check.xlsx", index=False)
 print(f"\n✅ Saved to accuracy_check.xlsx")
+
+
+#accuracy for 3 class
+# ── Filter only the 3 classes we built rules for ─────────────────────────────
+df_3class = df[df["comment"].notna()].copy()
+
+df_3class = df_3class[
+    df_3class["comment"].str.contains("DSD",    case=False, na=False) |
+    df_3class["comment"].str.contains("Follow", case=False, na=False) |
+    df_3class["comment"].str.contains("Argus",  case=False, na=False)
+].copy()
+
+print(f"Total 3 class emails : {len(df_3class)}")
+print(df_3class["comment"].value_counts())
+
+# ── Normalize actual comment ───────────────────────────────────────────────────
+def normalize_comment(comment):
+    comment = str(comment).strip().lower()
+    if "dsd" in comment:
+        return "DSD Acknowledgement"
+    elif "follow" in comment:
+        return "For Follow Up"
+    elif "argus" in comment:
+        return "Argus ID"
+
+df_3class["actual_class"] = df_3class["comment"].apply(normalize_comment)
+
+# ── Apply classifier ───────────────────────────────────────────────────────────
+df_3class[["predicted_class", "confidence",
+           "rule_triggered",  "matched_keywords"]] = df_3class.apply(
+    lambda row: classify_email(row, weighted_basket), axis=1
+)
+
+# ── Overall Accuracy within 3 classes only ────────────────────────────────────
+correct  = (df_3class["predicted_class"] == df_3class["actual_class"]).sum()
+total    = len(df_3class)
+accuracy = round(correct / total * 100, 2)
+
+print(f"\n✅ Overall Accuracy (3 classes only) : {correct}/{total}  ({accuracy}%)")
+
+# ── Per Class Accuracy ─────────────────────────────────────────────────────────
+print(f"\n── Per Class Accuracy ────────────────────────────────────────")
+print(f"{'Class':<25} {'Correct':>8} {'Total':>8} {'Accuracy':>10} {'Wrong':>8}")
+print(f"{'─'*65}")
+
+for class_name in ["DSD Acknowledgement", "For Follow Up", "Argus ID"]:
+    class_df      = df_3class[df_3class["actual_class"] == class_name]
+    class_correct = (class_df["predicted_class"] == class_name).sum()
+    class_total   = len(class_df)
+    class_acc     = round(class_correct / class_total * 100, 2) if class_total > 0 else 0
+    class_wrong   = class_total - class_correct
+    flag          = "✅" if class_acc >= 90 else "⚠️" if class_acc >= 70 else "❌"
+    print(f"{class_name:<25} {class_correct:>8} {class_total:>8} {class_acc:>9}%  {class_wrong:>6}  {flag}")
+
+# ── Misclassification Breakdown ───────────────────────────────────────────────
+print(f"\n── Misclassification Breakdown ───────────────────────────────")
+df_wrong = df_3class[df_3class["predicted_class"] != df_3class["actual_class"]]
+print(f"Total wrong : {len(df_wrong)}")
+print(f"\nActual → Predicted:")
+print(df_wrong.groupby(["actual_class","predicted_class"]).size().reset_index(name="count").to_string(index=False))
+
+# ── Rule Triggered Breakdown ──────────────────────────────────────────────────
+print(f"\n── Rule Triggered per Class ──────────────────────────────────")
+print(df_3class.groupby(["actual_class","rule_triggered"]).size().reset_index(name="count").to_string(index=False))
+
+# ── Save ──────────────────────────────────────────────────────────────────────
+df_3class.to_excel("accuracy_3class.xlsx", index=False)
+print(f"\n✅ Saved to accuracy_3class.xlsx")
