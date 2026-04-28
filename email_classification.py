@@ -529,13 +529,10 @@ else:
     print(f"\n✅ Total emails processed : {len(df_live)}")
 
 
-# =============================================================================
-# CELL 10 — SAVE OUTPUT
-# =============================================================================
+# ✅ Correct — no indentation
+output_file = f"classified_emails_{START_DATE}_{START_TIME.replace(':','')}_to_{END_DATE}_{END_TIME.replace(':','')}_IST.xlsx"
 
-    output_file = f"classified_emails_{START_DATE}_{START_TIME.replace(':','')}_to_{END_DATE}_{END_TIME.replace(':','')}_IST.xlsx"
-
-    df_live.to_excel(output_file, index=False)
-    print(f"\n✅ Saved to {output_file}")
-    print(f"   Rows    : {len(df_live)}")
-    print(f"   Columns : {len(df_live.columns)}")
+df_live.to_excel(output_file, index=False)
+print(f"\n✅ Saved to {output_file}")
+print(f"   Rows    : {len(df_live)}")
+print(f"   Columns : {len(df_live.columns)}")
