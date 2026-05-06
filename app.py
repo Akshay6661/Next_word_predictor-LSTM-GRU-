@@ -1310,98 +1310,140 @@ df_3class.to_excel("accuracy_3class.xlsx", index=False)
 print(f"\n✅ Saved to accuracy_3class.xlsx")
 
 
-## new classification rule added in classify email function 
-# ── Redefine classify_email with all hits at top ──────────────────────────────
+## new classification rule added in classify email 5 class 
 def classify_email(row):
 
-    subject  = str(row["subject"]).lower()    if pd.notna(row["subject"])   else ""
-    body     = str(row["pure_body"]).lower()  if pd.notna(row["pure_body"]) else ""
+    subject  = str(row["subject"]).lower()   if pd.notna(row["subject"])   else ""
+    body     = str(row["pure_body"]).lower() if pd.notna(row["pure_body"]) else ""
     combined = f"{subject} {body}"
     words    = set(re.findall(r"\b[a-zA-Z]{3,}\b", combined))
 
-    # ✅ All hits pre-computed here — no UnboundLocalError possible
+    # ── Pre-compute all hits ───────────────────────────────────────────────────
     argus_hits    = [w for w in ARGUS_TRIGGER         if w in words]
     ppm_hits      = [w for w in PPM_TRIGGER           if w in words]
     dsd_hits      = [w for w in DSD_TRIGGER           if w in words]
     followup_hits = [w for w in FOLLOWUP_UNIQUE_WORDS if w in words]
     overlap_hits  = [w for w in OVERLAP_WORDS         if w in words]
 
+    # ── Rule 1: Argus ID ──────────────────────────────────────────────────────
     if argus_hits:
-        return pd.Series({"predicted_class":"Argus ID","confidence":0.97,"rule_triggered":"argus_trigger","matched_keywords":str(argus_hits)})
+        return pd.Series({
+            "predicted_class" : "Argus ID",
+            "confidence"      : 0.97,
+            "rule_triggered"  : "argus_trigger",
+            "matched_keywords": str(argus_hits)
+        })
 
+    # ── Rule 2: CQA Acknowledgement ───────────────────────────────────────────
+    # Must have acknowledge + receipt + compliant all present
+    has_acknowledge = any(w in words for w in DSD_TRIGGER)
+    has_required    = all(w in words for w in CQA_REQUIRED_WORDS)
+
+    if has_acknowledge and has_required:
+        return pd.Series({
+            "predicted_class" : "CQA Acknowledgement",
+            "confidence"      : 0.97,
+            "rule_triggered"  : "cqa_trigger",
+            "matched_keywords": str([w for w in CQA_TRIGGER if w in words])
+        })
+
+    # ── Rule 3: PPM Request ───────────────────────────────────────────────────
     if len(ppm_hits) >= PPM_MIN_MATCHES:
         confidence = min(0.50 + (len(ppm_hits) * 0.10), 0.99)
-        return pd.Series({"predicted_class":"PPM Request","confidence":round(confidence,2),"rule_triggered":f"ppm_{len(ppm_hits)}_words_matched","matched_keywords":str(ppm_hits)})
+        return pd.Series({
+            "predicted_class" : "PPM Request",
+            "confidence"      : round(confidence, 2),
+            "rule_triggered"  : f"ppm_{len(ppm_hits)}_words_matched",
+            "matched_keywords": str(ppm_hits)
+        })
 
+    # ── Rule 4: DSD Acknowledgement ───────────────────────────────────────────
     if dsd_hits:
-        return pd.Series({"predicted_class":"DSD Acknowledgement","confidence":0.97,"rule_triggered":"dsd_trigger","matched_keywords":str(dsd_hits)})
+        return pd.Series({
+            "predicted_class" : "DSD Acknowledgement",
+            "confidence"      : 0.97,
+            "rule_triggered"  : "dsd_trigger",
+            "matched_keywords": str(dsd_hits)
+        })
 
+    # ── Rule 5: For Follow Up ─────────────────────────────────────────────────
     if len(followup_hits) >= FOLLOWUP_MIN_MATCHES:
         confidence = min(0.50 + (len(followup_hits) * 0.10), 0.99)
-        return pd.Series({"predicted_class":"For Follow Up","confidence":round(confidence,2),"rule_triggered":f"followup_{len(followup_hits)}_words_matched","matched_keywords":str(followup_hits)})
+        return pd.Series({
+            "predicted_class" : "For Follow Up",
+            "confidence"      : round(confidence, 2),
+            "rule_triggered"  : f"followup_{len(followup_hits)}_words_matched",
+            "matched_keywords": str(followup_hits)
+        })
 
+    # ── Rule 6: Weak Follow Up ────────────────────────────────────────────────
     if len(followup_hits) == 1 and len(overlap_hits) >= 2:
-        return pd.Series({"predicted_class":"For Follow Up","confidence":0.45,"rule_triggered":"followup_weak_signal","matched_keywords":str(followup_hits + overlap_hits)})
+        return pd.Series({
+            "predicted_class" : "For Follow Up",
+            "confidence"      : 0.45,
+            "rule_triggered"  : "followup_weak_signal",
+            "matched_keywords": str(followup_hits + overlap_hits)
+        })
 
-    return pd.Series({"predicted_class":"Unclassified","confidence":0.0,"rule_triggered":"no_match","matched_keywords":"[]"})
+    # ── Rule 7: Unclassified ──────────────────────────────────────────────────
+    return pd.Series({
+        "predicted_class" : "Unclassified",
+        "confidence"      : 0.0,
+        "rule_triggered"  : "no_match",
+        "matched_keywords": "[]"
+    })
 
-print("✅ classify_email redefined — now apply to df_unmatched")
+print("✅ classify_email with 5 classes defined")
 
-# ── Now apply ─────────────────────────────────────────────────────────────────
-df_unmatched[["predicted_class", "confidence",
-              "rule_triggered",  "matched_keywords"]] = df_unmatched.apply(
-    classify_email, axis=1
-)
+## update  of 5 accuracy 
+# ── Filter to 5 classes only ──────────────────────────────────────────────────
+df_5class = df[df["comment"].notna()].copy()
 
-print(f"✅ Done")
-print(df_unmatched["predicted_class"].value_counts())
-
-
-## update  of 4 accuracy 
-# ── Filter to 4 classes only ──────────────────────────────────────────────────
-df_4class = df[df["comment"].notna()].copy()
-
-df_4class = df_4class[
-    df_4class["comment"].str.contains("DSD",     case=False, na=False) |
-    df_4class["comment"].str.contains("Follow",  case=False, na=False) |
-    df_4class["comment"].str.contains("Argus",   case=False, na=False) |
-    df_4class["comment"].str.contains("PPM",     case=False, na=False)
+df_5class = df_5class[
+    df_5class["comment"].str.contains("DSD",     case=False, na=False) |
+    df_5class["comment"].str.contains("Follow",  case=False, na=False) |
+    df_5class["comment"].str.contains("Argus",   case=False, na=False) |
+    df_5class["comment"].str.contains("PPM",     case=False, na=False) |
+    df_5class["comment"].str.contains("CQA",     case=False, na=False)
 ].copy()
 
-print(f"Total 4 class emails : {len(df_4class)}")
-print(df_4class["comment"].value_counts())
+print(f"Total 5 class emails : {len(df_5class)}")
+print(df_5class["comment"].value_counts())
 
 # ── Normalize actual comment ───────────────────────────────────────────────────
 def normalize_comment(comment):
     comment = str(comment).strip().lower()
-    if "dsd"    in comment: return "DSD Acknowledgement"
+    if "cqa"    in comment: return "CQA Acknowledgement"
+    elif "dsd"    in comment: return "DSD Acknowledgement"
     elif "follow" in comment: return "For Follow Up"
     elif "argus"  in comment: return "Argus ID"
     elif "ppm"    in comment: return "PPM Request"
 
-df_4class["actual_class"] = df_4class["comment"].apply(normalize_comment)
+df_5class["actual_class"] = df_5class["comment"].apply(normalize_comment)
 
 # ── Apply classifier ───────────────────────────────────────────────────────────
-df_4class[["predicted_class", "confidence",
-           "rule_triggered",  "matched_keywords"]] = df_4class.apply(
+df_5class[["predicted_class", "confidence",
+           "rule_triggered",  "matched_keywords"]] = df_5class.apply(
     classify_email, axis=1
 )
 
 # ── Overall Accuracy ──────────────────────────────────────────────────────────
-correct  = (df_4class["predicted_class"] == df_4class["actual_class"]).sum()
-total    = len(df_4class)
+correct  = (df_5class["predicted_class"] == df_5class["actual_class"]).sum()
+total    = len(df_5class)
 accuracy = round(correct / total * 100, 2)
 
-print(f"\n✅ Overall Accuracy (4 classes) : {correct}/{total}  ({accuracy}%)")
+print(f"\n✅ Overall Accuracy (5 classes) : {correct}/{total}  ({accuracy}%)")
 
 # ── Per Class Accuracy ────────────────────────────────────────────────────────
 print(f"\n── Per Class Accuracy ────────────────────────────────────────")
 print(f"{'Class':<25} {'Correct':>8} {'Total':>8} {'Accuracy':>10} {'Wrong':>8}")
 print(f"{'─'*65}")
 
-for class_name in ["DSD Acknowledgement", "For Follow Up", "Argus ID", "PPM Request"]:
-    class_df      = df_4class[df_4class["actual_class"] == class_name]
+for class_name in ["Argus ID", "CQA Acknowledgement", "DSD Acknowledgement",
+                   "For Follow Up", "PPM Request"]:
+    class_df      = df_5class[df_5class["actual_class"] == class_name]
     if len(class_df) == 0:
+        print(f"{class_name:<25} {'N/A':>8} {'0':>8} {'N/A':>10} {'N/A':>8}")
         continue
     class_correct = (class_df["predicted_class"] == class_name).sum()
     class_total   = len(class_df)
@@ -1412,18 +1454,32 @@ for class_name in ["DSD Acknowledgement", "For Follow Up", "Argus ID", "PPM Requ
 
 # ── Misclassification Breakdown ───────────────────────────────────────────────
 print(f"\n── Misclassification Breakdown ───────────────────────────────")
-df_wrong = df_4class[df_4class["predicted_class"] != df_4class["actual_class"]]
+df_wrong = df_5class[df_5class["predicted_class"] != df_5class["actual_class"]]
 print(f"Total wrong : {len(df_wrong)}")
 print(df_wrong.groupby(["actual_class","predicted_class"]).size().reset_index(name="count").to_string(index=False))
 
 # ── Rule Triggered Breakdown ──────────────────────────────────────────────────
 print(f"\n── Rule Triggered per Class ──────────────────────────────────")
-print(df_4class.groupby(["actual_class","rule_triggered"]).size().reset_index(name="count").to_string(index=False))
+print(df_5class.groupby(["actual_class","rule_triggered"]).size().reset_index(name="count").to_string(index=False))
+
+# ── Misclassified files per class ─────────────────────────────────────────────
+df_wrong_dsd  = df_wrong[df_wrong["actual_class"] == "DSD Acknowledgement"]
+df_wrong_fu   = df_wrong[df_wrong["actual_class"] == "For Follow Up"]
+df_wrong_argus= df_wrong[df_wrong["actual_class"] == "Argus ID"]
+df_wrong_ppm  = df_wrong[df_wrong["actual_class"] == "PPM Request"]
+df_wrong_cqa  = df_wrong[df_wrong["actual_class"] == "CQA Acknowledgement"]
 
 # ── Save ──────────────────────────────────────────────────────────────────────
-df_4class.to_excel("accuracy_4class.xlsx", index=False)
-print(f"\n✅ Saved to accuracy_4class.xlsx")
+with pd.ExcelWriter("accuracy_5class.xlsx", engine="openpyxl") as writer:
+    df_5class.to_excel(writer,      sheet_name="All",          index=False)
+    df_wrong.to_excel(writer,       sheet_name="All Wrong",    index=False)
+    df_wrong_dsd.to_excel(writer,   sheet_name="DSD Wrong",    index=False)
+    df_wrong_fu.to_excel(writer,    sheet_name="FollowUp Wrong",index=False)
+    df_wrong_argus.to_excel(writer, sheet_name="Argus Wrong",  index=False)
+    df_wrong_ppm.to_excel(writer,   sheet_name="PPM Wrong",    index=False)
+    df_wrong_cqa.to_excel(writer,   sheet_name="CQA Wrong",    index=False)
 
+print(f"\n✅ Saved to accuracy_5class.xlsx with separate sheets per class")
 
 ##find which followups following to ppm mail 
 # ── Follow Up emails now predicted as PPM ─────────────────────────────────────
@@ -1450,56 +1506,43 @@ for word, count in Counter(all_keywords).most_common():
 
 
 ##trigger list
-# ── Argus ID — single word trigger ───────────────────────────────────────────
-ARGUS_TRIGGER = [
-    "argus",
+# ── CQA Acknowledgement — ALL 3 words must match ──────────────────────────────
+CQA_TRIGGER = [
+    "acknowledge",   # or acknowledged/acknowledgement
+    "receipt",
+    "compliant",
 ]
+CQA_REQUIRED_WORDS = ["receipt", "compliant"]   # these must be present along with acknowledge
 
-# ── PPM Request — minimum 2 words must match ──────────────────────────────────
+# ── Argus ID ──────────────────────────────────────────────────────────────────
+ARGUS_TRIGGER = ["argus"]
+
+# ── PPM Request ───────────────────────────────────────────────────────────────
 PPM_TRIGGER = [
-    "revert",
-    "prepaid",
-    "mailer",
-    "ppm",
-    "investigated",
-    "initiate",
-    "findings",
-    # ← add more based on your analysis
+    "revert", "prepaid", "mailer", "ppm",
+    "investigated", "initiate", "findings",
 ]
 PPM_MIN_MATCHES = 2
 
-# ── DSD Acknowledgement — single word trigger ─────────────────────────────────
+# ── DSD Acknowledgement ───────────────────────────────────────────────────────
 DSD_TRIGGER = [
-    "acknowledge",
-    "acknowledged",
-    "acknowledgement",
-    "acknowledgment",
+    "acknowledge", "acknowledged", "acknowledgement", "acknowledgment",
 ]
 
-# ── For Follow Up — minimum 2 words must match ────────────────────────────────
+# ── For Follow Up ─────────────────────────────────────────────────────────────
 FOLLOWUP_UNIQUE_WORDS = [
-    "investigation",
-    "batch",
-    "sample",
-    "kindly",
-    "team",
-    "observed",
-    "provide",
-    "patient",
-    "information",
-    "discrepancy",
-    "found",
-    "were",
-    # ← add more based on your analysis
+    "investigation", "batch", "sample", "kindly", "team",
+    "observed", "provide", "patient", "information", "discrepancy",
+    "found", "were",
 ]
 FOLLOWUP_MIN_MATCHES = 2
 
-# ── Overlap words — weak supporting signal only ───────────────────────────────
-OVERLAP_WORDS = [
-    "colleague",
-    "below",
-    "find",
-    "case",
-    "greetings",
-    "receipt",
-]
+# ── Overlap words ─────────────────────────────────────────────────────────────
+OVERLAP_WORDS = ["colleague", "below", "find", "case", "greetings", "receipt"]
+
+print("✅ All trigger lists loaded")
+print(f"   Argus    : {len(ARGUS_TRIGGER)}")
+print(f"   CQA      : {len(CQA_TRIGGER)}")
+print(f"   PPM      : {len(PPM_TRIGGER)}")
+print(f"   DSD      : {len(DSD_TRIGGER)}")
+print(f"   Follow Up: {len(FOLLOWUP_UNIQUE_WORDS)}")
