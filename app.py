@@ -1447,3 +1447,59 @@ for kw in df_fu_as_ppm["matched_keywords"]:
 print("PPM words causing Follow Up misclassification:")
 for word, count in Counter(all_keywords).most_common():
     print(f"   {word:<20} {count:>5}")
+
+
+##trigger list
+# ── Argus ID — single word trigger ───────────────────────────────────────────
+ARGUS_TRIGGER = [
+    "argus",
+]
+
+# ── PPM Request — minimum 2 words must match ──────────────────────────────────
+PPM_TRIGGER = [
+    "revert",
+    "prepaid",
+    "mailer",
+    "ppm",
+    "investigated",
+    "initiate",
+    "findings",
+    # ← add more based on your analysis
+]
+PPM_MIN_MATCHES = 2
+
+# ── DSD Acknowledgement — single word trigger ─────────────────────────────────
+DSD_TRIGGER = [
+    "acknowledge",
+    "acknowledged",
+    "acknowledgement",
+    "acknowledgment",
+]
+
+# ── For Follow Up — minimum 2 words must match ────────────────────────────────
+FOLLOWUP_UNIQUE_WORDS = [
+    "investigation",
+    "batch",
+    "sample",
+    "kindly",
+    "team",
+    "observed",
+    "provide",
+    "patient",
+    "information",
+    "discrepancy",
+    "found",
+    "were",
+    # ← add more based on your analysis
+]
+FOLLOWUP_MIN_MATCHES = 2
+
+# ── Overlap words — weak supporting signal only ───────────────────────────────
+OVERLAP_WORDS = [
+    "colleague",
+    "below",
+    "find",
+    "case",
+    "greetings",
+    "receipt",
+]
