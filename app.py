@@ -1423,3 +1423,27 @@ print(df_4class.groupby(["actual_class","rule_triggered"]).size().reset_index(na
 # ── Save ──────────────────────────────────────────────────────────────────────
 df_4class.to_excel("accuracy_4class.xlsx", index=False)
 print(f"\n✅ Saved to accuracy_4class.xlsx")
+
+
+##find which followups following to ppm mail 
+# ── Follow Up emails now predicted as PPM ─────────────────────────────────────
+df_fu_as_ppm = df_4class[
+    (df_4class["actual_class"]    == "For Follow Up") &
+    (df_4class["predicted_class"] == "PPM Request")
+].copy()
+
+print(f"Follow Up → PPM misclassified : {len(df_fu_as_ppm)}")
+print(f"\n── PPM words triggering in Follow Up emails ──────")
+print(df_fu_as_ppm["matched_keywords"].value_counts().head(20))
+##finding the culprit word
+from collections import Counter
+import re
+
+# See which PPM words appear most in wrongly classified Follow Up emails
+all_keywords = []
+for kw in df_fu_as_ppm["matched_keywords"]:
+    all_keywords.extend(eval(kw))
+
+print("PPM words causing Follow Up misclassification:")
+for word, count in Counter(all_keywords).most_common():
+    print(f"   {word:<20} {count:>5}")
