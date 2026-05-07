@@ -187,3 +187,58 @@ def classify_email(row):
     })
 
 print("✅ classify_email updated — 10 rules with guards")
+
+
+
+### debug fu with unique words 
+
+# ── Follow Up emails going to Unclassified ────────────────────────────────────
+df_fu_unclassified = df_5class[
+    (df_5class["actual_class"]    == "For Follow Up") &
+    (df_5class["predicted_class"] == "Unclassified")
+].copy()
+
+print(f"Follow Up → Unclassified : {len(df_fu_unclassified)}")
+
+# ── Top words in these emails ─────────────────────────────────────────────────
+all_text = " ".join(
+    (df_fu_unclassified["subject"].fillna("") + " " +
+     df_fu_unclassified["pure_body"].fillna("")).tolist()
+).lower()
+
+words   = re.findall(r"\b[a-zA-Z]{3,}\b", all_text)
+words   = [w for w in words if w not in stop_words]
+counter = Counter(words)
+
+# ── Check against DSD emails to find safe words ───────────────────────────────
+dsd_text = " ".join(
+    (df_5class[df_5class["actual_class"] == "DSD Acknowledgement"]["subject"].fillna("") + " " +
+     df_5class[df_5class["actual_class"] == "DSD Acknowledgement"]["pure_body"].fillna("")).tolist()
+).lower()
+
+dsd_words   = re.findall(r"\b[a-zA-Z]{3,}\b", dsd_text)
+dsd_counter = Counter(dsd_words)
+total_dsd   = len(df_5class[df_5class["actual_class"] == "DSD Acknowledgement"])
+total_fu_un = len(df_fu_unclassified)
+
+print(f"\n── Top words in Unclassified Follow Up emails ───────────────")
+print(f"   {'Word':<20} {'FU Count':>10} {'FU %':>8} {'DSD Count':>10} {'DSD %':>8} {'Safe?':>8}")
+print(f"   {'─'*65}")
+
+for word, count in counter.most_common(30):
+    fu_pct  = round(count / total_fu_un * 100, 1)
+    dsd_cnt = dsd_counter.get(word, 0)
+    dsd_pct = round(dsd_cnt / total_dsd * 100, 1)
+    in_trigger = word in FOLLOWUP_UNIQUE_WORDS
+    
+    # Safe if appears a lot in FU but NOT much in DSD
+    safe = "✅" if dsd_pct < 20 and fu_pct > 30 else "⚠️"
+    flag = "already" if in_trigger else safe
+    
+    print(f"   {word:<20} {count:>10} {fu_pct:>7}% {dsd_cnt:>10} {dsd_pct:>7}% {flag:>8}")
+
+# ── Also show sample bodies ───────────────────────────────────────────────────
+print(f"\n── Sample Unclassified Follow Up bodies ─────────────────────")
+for i, row in df_fu_unclassified.head(5).iterrows():
+    print(f"\nBody : {row['pure_body'][:300]}")
+    print("─" * 60)
