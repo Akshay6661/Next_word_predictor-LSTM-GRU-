@@ -242,3 +242,28 @@ print(f"\n── Sample Unclassified Follow Up bodies ────────�
 for i, row in df_fu_unclassified.head(5).iterrows():
     print(f"\nBody : {row['pure_body'][:300]}")
     print("─" * 60)
+
+
+### updated followup basket 
+FOLLOWUP_UNIQUE_WORDS = [
+    # ── Original strong words ────────────────────────────────────────────────
+    "investigation", "batch",      "sample",
+    "observed",      "patient",    "discrepancy",
+    "found",         "were",       "preliminary",
+    "defect",        "analytical", "records",
+    "adverse",       "reported",
+
+    # ── Safe words from analysis ─────────────────────────────────────────────
+    "team",          "kindly",     "below",
+    "cipla",         "follow",     "response",
+    "share",         "provide",    "medical",
+    "final",         "recon",      "information",
+    "reporter",      "qinecsa",    "confirm",
+    "note",
+
+    # ── From sample bodies — very FU specific ────────────────────────────────
+    "cipsc",         "reconciliation",
+]
+FOLLOWUP_MIN_MATCHES = 3
+
+print(f"✅ Follow Up trigger words : {len(FOLLOWUP_UNIQUE_WORDS)}")
