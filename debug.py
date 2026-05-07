@@ -61,6 +61,18 @@ print(f"   Follow Up triggers    : {len(FOLLOWUP_UNIQUE_WORDS)} (min {FOLLOWUP_M
 print(f"   Overlap words         : {len(OVERLAP_WORDS)}")
 
 
+PPM_WEAK_TRIGGER = [
+    # Original
+    "initiated",   "investigated",
+    # New safe additions
+    "revert",      "investigate",
+    "shall",       "formoterol",
+    "zone",        "code",
+    "address",     "ltd",
+    "contact",     "send",
+]
+PPM_MIN_MATCHES = 2
+
 
 def classify_email(row):
 
@@ -86,10 +98,11 @@ def classify_email(row):
     has_cqa_phrase    = any(phrase in combined for phrase in CQA_PHRASES)
     has_batch_invest  = ("batch" in words or "preliminary" in words or
                          "discrepancy" in words or "analytical" in words)
-
-    # ── Computed signals ──────────────────────────────────────────────────────
     has_strong_followup = len(followup_hits) >= 3
     has_ppm_signal      = len(ppm_weak_hits) >= 1
+
+    # ✅ New PPM invest signal for CQA guard
+    has_ppm_invest    = any(w in words for w in ["revert", "investigate", "shall", "findings"])
 
     # ── Rule 1: Argus ID ──────────────────────────────────────────────────────
     if argus_hits:
@@ -128,8 +141,8 @@ def classify_email(row):
             "matched_keywords": str([p for p in CQA_PHRASES if p in combined])
         })
 
-    # ── Rule 5: CQA Investigation ─────────────────────────────────────────────
-    if has_cqa_required and has_cqa_invest and not has_batch_invest:
+    # ── Rule 5: CQA Investigation — guarded against PPM ──────────────────────
+    if has_cqa_required and has_cqa_invest and not has_batch_invest and not has_ppm_invest:
         return pd.Series({
             "predicted_class" : "CQA Acknowledgement",
             "confidence"      : 0.97,
@@ -151,7 +164,7 @@ def classify_email(row):
         })
 
     # ── Rule 7: DSD — guarded against Follow Up ───────────────────────────────
-    if dsd_hits and len(followup_hits) < 3:
+    if dsd_hits and len(followup_hits) < 4:
         return pd.Series({
             "predicted_class" : "DSD Acknowledgement",
             "confidence"      : 0.97,
@@ -159,8 +172,8 @@ def classify_email(row):
             "matched_keywords": str(dsd_hits)
         })
 
-    # ── Rule 8: For Follow Up — min 3 matches ────────────────────────────────
-    if len(followup_hits) >= FOLLOWUP_MIN_MATCHES:
+    # ── Rule 8: Follow Up — guarded against PPM ──────────────────────────────
+    if len(followup_hits) >= FOLLOWUP_MIN_MATCHES and len(all_ppm_hits) < 2:
         confidence = min(0.50 + (len(followup_hits) * 0.10), 0.99)
         return pd.Series({
             "predicted_class" : "For Follow Up",
@@ -186,7 +199,7 @@ def classify_email(row):
         "matched_keywords": "[]"
     })
 
-print("✅ classify_email updated — 10 rules with guards")
+print("✅ classify_email updated — PPM improvements added")
 
 
 
