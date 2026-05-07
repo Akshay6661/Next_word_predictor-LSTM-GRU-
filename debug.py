@@ -267,3 +267,66 @@ FOLLOWUP_UNIQUE_WORDS = [
 FOLLOWUP_MIN_MATCHES = 3
 
 print(f"✅ Follow Up trigger words : {len(FOLLOWUP_UNIQUE_WORDS)}")
+
+
+
+## debug ppm req 
+# ── PPM → Follow Up emails ────────────────────────────────────────────────────
+df_ppm_as_fu = df_5class[
+    (df_5class["actual_class"]    == "PPM Request") &
+    (df_5class["predicted_class"] == "For Follow Up")
+].copy()
+
+print(f"PPM → Follow Up : {len(df_ppm_as_fu)}")
+
+# ── Top words in PPM→FU emails ────────────────────────────────────────────────
+all_text = " ".join(
+    (df_ppm_as_fu["subject"].fillna("") + " " +
+     df_ppm_as_fu["pure_body"].fillna("")).tolist()
+).lower()
+
+words   = re.findall(r"\b[a-zA-Z]{3,}\b", all_text)
+words   = [w for w in words if w not in stop_words]
+counter = Counter(words)
+
+# ── Check against FU emails ───────────────────────────────────────────────────
+fu_text = " ".join(
+    (df_5class[df_5class["actual_class"] == "For Follow Up"]["subject"].fillna("") + " " +
+     df_5class[df_5class["actual_class"] == "For Follow Up"]["pure_body"].fillna("")).tolist()
+).lower()
+
+fu_words   = re.findall(r"\b[a-zA-Z]{3,}\b", fu_text)
+fu_counter = Counter(fu_words)
+total_fu   = len(df_5class[df_5class["actual_class"] == "For Follow Up"])
+total_ppm  = len(df_ppm_as_fu)
+
+print(f"\n── Top words in PPM→FU emails ────────────────────────────────")
+print(f"   {'Word':<20} {'PPM Count':>10} {'PPM %':>8} {'FU Count':>10} {'FU %':>8} {'Add to PPM?'}")
+print(f"   {'─'*70}")
+
+for word, count in counter.most_common(25):
+    ppm_pct = round(count / total_ppm * 100, 1)
+    fu_cnt  = fu_counter.get(word, 0)
+    fu_pct  = round(fu_cnt / total_fu * 100, 1)
+    in_ppm  = word in PPM_STRONG_TRIGGER or word in PPM_WEAK_TRIGGER
+    
+    # Good PPM word if high in PPM→FU but relatively lower in FU
+    safe = "✅ add" if ppm_pct > 30 and fu_pct < 50 and not in_ppm else "⚠️"
+    flag = "already" if in_ppm else safe
+    print(f"   {word:<20} {count:>10} {ppm_pct:>7}% {fu_cnt:>10} {fu_pct:>7}%  {flag}")
+
+# ── PPM Unclassified emails ───────────────────────────────────────────────────
+df_ppm_unclass = df_5class[
+    (df_5class["actual_class"]    == "PPM Request") &
+    (df_5class["predicted_class"] == "Unclassified")
+].copy()
+
+print(f"\n── Sample PPM→FU bodies ──────────────────────────────────────")
+for i, row in df_ppm_as_fu.head(3).iterrows():
+    print(f"\nBody : {row['pure_body'][:300]}")
+    print("─" * 60)
+
+print(f"\n── Sample PPM Unclassified bodies ───────────────────────────")
+for i, row in df_ppm_unclass.head(3).iterrows():
+    print(f"\nBody : {row['pure_body'][:300]}")
+    print("─" * 60)
