@@ -74,3 +74,50 @@ for i, row in df_cqa_wrong.head(5).iterrows():
     print(f"\nPredicted as : {row['predicted_class']}")
     print(f"Body         : {row['pure_body'][:400]}")
     print("─" * 60)
+
+
+
+
+# =============================================================================
+# CELL 11 — EMAIL RECON FILE
+# =============================================================================
+
+# ── Build recon dataframe ─────────────────────────────────────────────────────
+df_recon = pd.DataFrame()
+
+# ── Map columns from classified report ───────────────────────────────────────
+df_recon["From"]                 = df_live["sender_name"]
+df_recon["Subject"]              = df_live["subject"]
+df_recon["Received Time"]        = df_live["time"]          # Sun HH:MM AM/PM
+df_recon["Received Date"]        = df_live["date"]
+df_recon["Owner"]                = ""                        # blank — filled manually
+df_recon["Action"]               = ""                        # blank — filled manually
+df_recon["Status"]               = ""                        # blank — filled manually
+df_recon["pure_body"]            = df_live["pure_body"]
+df_recon["Comments"]             = df_live["predicted_class"]
+df_recon["Checked by"]           = ""                        # blank — filled manually
+df_recon["TAT status"]           = ""                        # blank — filled manually
+df_recon["Communication status"] = ""                        # blank — filled manually
+df_recon["case_number"]          = df_live["case_number"]
+
+# ── Sort by date and time ─────────────────────────────────────────────────────
+df_recon["sort_dt"] = pd.to_datetime(
+                        df_live["date"].astype(str) + " " +
+                        df_live["time"].str.extract(r"(\d{2}:\d{2} [AP]M)")[0],
+                        format="%Y-%m-%d %I:%M %p",
+                        errors="coerce"
+                      )
+
+df_recon = df_recon.sort_values("sort_dt", ascending=True).reset_index(drop=True)
+df_recon = df_recon.drop(columns=["sort_dt"])
+
+# ── Save recon file ───────────────────────────────────────────────────────────
+recon_file = f"email_recon_{START_DATE}_{START_TIME.replace(':','')}_to_{END_DATE}_{END_TIME.replace(':','')}_IST.xlsx"
+
+df_recon.to_excel(recon_file, index=False)
+
+print(f"✅ Email recon saved : {recon_file}")
+print(f"   Rows             : {len(df_recon)}")
+print(f"   Columns          : {df_recon.columns.tolist()}")
+print(f"\n── Comments distribution ─────────────────────────────────────")
+print(df_recon["Comments"].value_counts())
