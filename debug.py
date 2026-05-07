@@ -92,17 +92,11 @@ def classify_email(row):
     all_ppm_hits      = ppm_strong_hits + ppm_weak_hits
 
     has_cqa_device    = len(cqa_device_hits) >= CQA_DEVICE_MIN_MATCHES
-    has_acknowledge   = any(w in words for w in DSD_TRIGGER)
     has_cqa_required  = all(w in words for w in CQA_REQUIRED_WORDS)
     has_cqa_invest    = any(w in words for w in CQA_INVESTIGATE_WORDS)
     has_cqa_phrase    = any(phrase in combined for phrase in CQA_PHRASES)
     has_batch_invest  = ("batch" in words or "preliminary" in words or
                          "discrepancy" in words or "analytical" in words)
-    has_strong_followup = len(followup_hits) >= 3
-    has_ppm_signal      = len(ppm_weak_hits) >= 1
-
-    # ✅ New PPM invest signal for CQA guard
-    has_ppm_invest    = any(w in words for w in ["revert", "investigate", "shall", "findings"])
 
     # ── Rule 1: Argus ID ──────────────────────────────────────────────────────
     if argus_hits:
@@ -132,8 +126,8 @@ def classify_email(row):
             "matched_keywords": str(cqa_device_hits)
         })
 
-    # ── Rule 4: CQA Phrase — guarded ─────────────────────────────────────────
-    if has_cqa_phrase and not has_strong_followup and not has_ppm_signal:
+    # ── Rule 4: CQA Phrase — no guards, phrase is specific enough ────────────
+    if has_cqa_phrase:
         return pd.Series({
             "predicted_class" : "CQA Acknowledgement",
             "confidence"      : 0.97,
@@ -141,8 +135,8 @@ def classify_email(row):
             "matched_keywords": str([p for p in CQA_PHRASES if p in combined])
         })
 
-    # ── Rule 5: CQA Investigation — guarded against PPM ──────────────────────
-    if has_cqa_required and has_cqa_invest and not has_batch_invest and not has_ppm_invest:
+    # ── Rule 5: CQA Investigation — removed has_ppm_invest guard ─────────────
+    if has_cqa_required and has_cqa_invest and not has_batch_invest:
         return pd.Series({
             "predicted_class" : "CQA Acknowledgement",
             "confidence"      : 0.97,
@@ -173,7 +167,7 @@ def classify_email(row):
         })
 
     # ── Rule 8: Follow Up — guarded against PPM ──────────────────────────────
-    if len(followup_hits) >= FOLLOWUP_MIN_MATCHES and len(all_ppm_hits) < 2:
+    if len(followup_hits) >= FOLLOWUP_MIN_MATCHES and len(all_ppm_hits) < 3:
         confidence = min(0.50 + (len(followup_hits) * 0.10), 0.99)
         return pd.Series({
             "predicted_class" : "For Follow Up",
@@ -183,7 +177,7 @@ def classify_email(row):
         })
 
     # ── Rule 9: Weak Follow Up ────────────────────────────────────────────────
-    if len(followup_hits) >= 1 and len(overlap_hits) >= 2:
+    if len(followup_hits) == 1 and len(overlap_hits) >= 2:
         return pd.Series({
             "predicted_class" : "For Follow Up",
             "confidence"      : 0.45,
@@ -199,9 +193,7 @@ def classify_email(row):
         "matched_keywords": "[]"
     })
 
-print("✅ classify_email updated — PPM improvements added")
-
-
+print("✅ classify_email updated — CQA guards removed")
 
 ### debug fu with unique words 
 
