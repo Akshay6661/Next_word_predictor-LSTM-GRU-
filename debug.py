@@ -1,3 +1,67 @@
+# =============================================================================
+# TRIGGER LISTS — ALL CLASSES
+# =============================================================================
+
+# ── CQA Acknowledgement ───────────────────────────────────────────────────────
+CQA_REQUIRED_WORDS    = ["receipt", "complaint"]
+CQA_INVESTIGATE_WORDS = ["revert", "findings", "investigate", "investigation"]
+CQA_DEVICE_WORDS      = ["inhaler", "troubleshooting", "logging"]
+CQA_DEVICE_MIN_MATCHES = 2
+
+CQA_PHRASES = [
+    "acknowledge the receipt the below complaint",
+    "acknowledge receipt below complaint",
+    "acknowledge the receipt below complaint",
+    "receipt of the below complaint",
+    "receipt the below complaint",
+]
+
+# ── PPM Request ───────────────────────────────────────────────────────────────
+PPM_STRONG_TRIGGER = ["prepaid", "mailer", "ppm"]
+PPM_WEAK_TRIGGER   = ["initiated", "investigated"]
+PPM_MIN_MATCHES    = 2
+
+# ── Argus ID ──────────────────────────────────────────────────────────────────
+ARGUS_TRIGGER = ["argus"]
+
+# ── DSD Acknowledgement ───────────────────────────────────────────────────────
+DSD_TRIGGER = [
+    "acknowledge", "acknowledged",
+    "acknowledgement", "acknowledgment",
+]
+
+# ── For Follow Up ─────────────────────────────────────────────────────────────
+FOLLOWUP_UNIQUE_WORDS = [
+    "investigation", "batch",       "sample",      "kindly",
+    "team",          "observed",    "provide",     "patient",
+    "information",   "discrepancy", "found",       "were",
+    "preliminary",   "records",     "defect",      "analytical",
+    "review",        "complaint",   "reported",    "adverse",
+    "event",         "outcome",     "follow",      "update",
+    "status",        "pending",     "resolution",  "closure",
+]
+FOLLOWUP_MIN_MATCHES = 3
+
+# ── Overlap words ─────────────────────────────────────────────────────────────
+OVERLAP_WORDS = [
+    "colleague", "below", "find",
+    "case",      "greetings", "receipt",
+]
+
+print("✅ Trigger lists updated")
+print(f"   Argus triggers        : {len(ARGUS_TRIGGER)}")
+print(f"   CQA required          : {len(CQA_REQUIRED_WORDS)}")
+print(f"   CQA investigate       : {len(CQA_INVESTIGATE_WORDS)}")
+print(f"   CQA device            : {len(CQA_DEVICE_WORDS)} (min {CQA_DEVICE_MIN_MATCHES})")
+print(f"   CQA phrases           : {len(CQA_PHRASES)}")
+print(f"   PPM strong            : {len(PPM_STRONG_TRIGGER)}")
+print(f"   PPM weak              : {len(PPM_WEAK_TRIGGER)} (min {PPM_MIN_MATCHES})")
+print(f"   DSD triggers          : {len(DSD_TRIGGER)}")
+print(f"   Follow Up triggers    : {len(FOLLOWUP_UNIQUE_WORDS)} (min {FOLLOWUP_MIN_MATCHES})")
+print(f"   Overlap words         : {len(OVERLAP_WORDS)}")
+
+
+
 def classify_email(row):
 
     subject  = str(row["subject"]).lower()   if pd.notna(row["subject"])   else ""
@@ -12,18 +76,20 @@ def classify_email(row):
     dsd_hits          = [w for w in DSD_TRIGGER            if w in words]
     followup_hits     = [w for w in FOLLOWUP_UNIQUE_WORDS  if w in words]
     overlap_hits      = [w for w in OVERLAP_WORDS          if w in words]
+    cqa_device_hits   = [w for w in CQA_DEVICE_WORDS       if w in words]
     all_ppm_hits      = ppm_strong_hits + ppm_weak_hits
 
-    # ✅ Device needs min 2 specific words
-    cqa_device_hits   = [w for w in CQA_DEVICE_WORDS       if w in words]
     has_cqa_device    = len(cqa_device_hits) >= CQA_DEVICE_MIN_MATCHES
-
     has_acknowledge   = any(w in words for w in DSD_TRIGGER)
     has_cqa_required  = all(w in words for w in CQA_REQUIRED_WORDS)
     has_cqa_invest    = any(w in words for w in CQA_INVESTIGATE_WORDS)
     has_cqa_phrase    = any(phrase in combined for phrase in CQA_PHRASES)
     has_batch_invest  = ("batch" in words or "preliminary" in words or
                          "discrepancy" in words or "analytical" in words)
+
+    # ── Computed signals ──────────────────────────────────────────────────────
+    has_strong_followup = len(followup_hits) >= 3
+    has_ppm_signal      = len(ppm_weak_hits) >= 1
 
     # ── Rule 1: Argus ID ──────────────────────────────────────────────────────
     if argus_hits:
@@ -44,7 +110,7 @@ def classify_email(row):
             "matched_keywords": str(all_ppm_hits)
         })
 
-    # ── Rule 3: CQA Device — needs 2+ specific words ──────────────────────────
+    # ── Rule 3: CQA Device ────────────────────────────────────────────────────
     if has_cqa_device:
         return pd.Series({
             "predicted_class" : "CQA Acknowledgement",
@@ -53,8 +119,8 @@ def classify_email(row):
             "matched_keywords": str(cqa_device_hits)
         })
 
-    # ── Rule 4: CQA Phrase ────────────────────────────────────────────────────
-    if has_cqa_phrase:
+    # ── Rule 4: CQA Phrase — guarded ─────────────────────────────────────────
+    if has_cqa_phrase and not has_strong_followup and not has_ppm_signal:
         return pd.Series({
             "predicted_class" : "CQA Acknowledgement",
             "confidence"      : 0.97,
@@ -84,8 +150,8 @@ def classify_email(row):
             "matched_keywords": str(ppm_weak_hits)
         })
 
-    # ── Rule 7: DSD Acknowledgement ───────────────────────────────────────────
-    if dsd_hits:
+    # ── Rule 7: DSD — guarded against Follow Up ───────────────────────────────
+    if dsd_hits and len(followup_hits) < 3:
         return pd.Series({
             "predicted_class" : "DSD Acknowledgement",
             "confidence"      : 0.97,
@@ -93,7 +159,7 @@ def classify_email(row):
             "matched_keywords": str(dsd_hits)
         })
 
-    # ── Rule 8: For Follow Up ─────────────────────────────────────────────────
+    # ── Rule 8: For Follow Up — min 3 matches ────────────────────────────────
     if len(followup_hits) >= FOLLOWUP_MIN_MATCHES:
         confidence = min(0.50 + (len(followup_hits) * 0.10), 0.99)
         return pd.Series({
@@ -104,7 +170,7 @@ def classify_email(row):
         })
 
     # ── Rule 9: Weak Follow Up ────────────────────────────────────────────────
-    if len(followup_hits) == 1 and len(overlap_hits) >= 2:
+    if len(followup_hits) >= 1 and len(overlap_hits) >= 2:
         return pd.Series({
             "predicted_class" : "For Follow Up",
             "confidence"      : 0.45,
@@ -120,4 +186,4 @@ def classify_email(row):
         "matched_keywords": "[]"
     })
 
-print("✅ classify_email updated — device trigger now needs 2+ words")
+print("✅ classify_email updated — 10 rules with guards")
