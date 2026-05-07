@@ -79,25 +79,28 @@ for i, row in df_cqa_wrong.head(5).iterrows():
 
 
 # =============================================================================
-# CELL 11 — EMAIL RECON FILE
+# CELL 11 — EMAIL RECON FILE WITH FORMATTING
 # =============================================================================
+
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from io import BytesIO
 
 # ── Build recon dataframe ─────────────────────────────────────────────────────
 df_recon = pd.DataFrame()
 
-# ── Map columns from classified report ───────────────────────────────────────
 df_recon["From"]                 = df_live["sender_name"]
 df_recon["Subject"]              = df_live["subject"]
-df_recon["Received Time"]        = df_live["time"]          # Sun HH:MM AM/PM
-df_recon["Received Date"]        = df_live["date"]
-df_recon["Owner"]                = ""                        # blank — filled manually
-df_recon["Action"]               = ""                        # blank — filled manually
-df_recon["Status"]               = ""                        # blank — filled manually
+df_recon["Received Time"]        = df_live["time"]
+df_recon["Received Date"]        = pd.to_datetime(df_live["date"]).dt.strftime("%d-%b-%y")
+df_recon["Owner"]                = ""
+df_recon["Action"]               = ""
+df_recon["Status"]               = ""
 df_recon["pure_body"]            = df_live["pure_body"]
 df_recon["Comments"]             = df_live["predicted_class"]
-df_recon["Checked by"]           = ""                        # blank — filled manually
-df_recon["TAT status"]           = ""                        # blank — filled manually
-df_recon["Communication status"] = ""                        # blank — filled manually
+df_recon["Checked by"]           = ""
+df_recon["TAT status"]           = ""
+df_recon["Communication status"] = ""
 df_recon["case_number"]          = df_live["case_number"]
 
 # ── Sort by date and time ─────────────────────────────────────────────────────
@@ -107,17 +110,60 @@ df_recon["sort_dt"] = pd.to_datetime(
                         format="%Y-%m-%d %I:%M %p",
                         errors="coerce"
                       )
-
 df_recon = df_recon.sort_values("sort_dt", ascending=True).reset_index(drop=True)
 df_recon = df_recon.drop(columns=["sort_dt"])
 
-# ── Save recon file ───────────────────────────────────────────────────────────
+# ── Save to Excel with formatting ─────────────────────────────────────────────
 recon_file = f"email_recon_{START_DATE}_{START_TIME.replace(':','')}_to_{END_DATE}_{END_TIME.replace(':','')}_IST.xlsx"
 
+# Write dataframe first
 df_recon.to_excel(recon_file, index=False)
 
-print(f"✅ Email recon saved : {recon_file}")
-print(f"   Rows             : {len(df_recon)}")
-print(f"   Columns          : {df_recon.columns.tolist()}")
-print(f"\n── Comments distribution ─────────────────────────────────────")
+# ── Apply formatting using openpyxl ──────────────────────────────────────────
+wb = load_workbook(recon_file)
+ws = wb.active
+
+# Header fill color #f8cbad
+header_fill   = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
+header_font   = Font(bold=True, color="000000")
+header_align  = Alignment(horizontal="center", vertical="center", wrap_text=True)
+thin_border   = Border(
+    left   = Side(style="thin"),
+    right  = Side(style="thin"),
+    top    = Side(style="thin"),
+    bottom = Side(style="thin")
+)
+
+# ── Format header row ─────────────────────────────────────────────────────────
+for cell in ws[1]:
+    cell.fill      = header_fill
+    cell.font      = header_font
+    cell.alignment = header_align
+    cell.border    = thin_border
+
+# ── Auto fit column widths ────────────────────────────────────────────────────
+for col in ws.columns:
+    max_length = 0
+    col_letter = col[0].column_letter
+    for cell in col:
+        try:
+            if cell.value:
+                max_length = max(max_length, len(str(cell.value)))
+        except:
+            pass
+    adjusted_width = min(max_length + 4, 40)   # cap at 40
+    ws.column_dimensions[col_letter].width = adjusted_width
+
+# ── Freeze top row ────────────────────────────────────────────────────────────
+ws.freeze_panes = "A2"
+
+# ── Save formatted workbook ───────────────────────────────────────────────────
+wb.save(recon_file)
+
+print(f"✅ Email recon saved    : {recon_file}")
+print(f"   Rows                : {len(df_recon)}")
+print(f"   Header color        : #F8CBAD ✅")
+print(f"   Columns auto-fitted : ✅")
+print(f"   Top row frozen      : ✅")
+print(f"\n── Comments distribution ────────────────────────────────────")
 print(df_recon["Comments"].value_counts())
