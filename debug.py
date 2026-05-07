@@ -1,77 +1,132 @@
-# ── PPM wrong breakdown ───────────────────────────────────────────────────────
-df_ppm_wrong = df_5class[
-    (df_5class["actual_class"]    == "PPM Request") &
-    (df_5class["predicted_class"] != "PPM Request")
-].copy()
+# ── CQA Phrase triggers — exact template phrases ──────────────────────────────
+CQA_PHRASES = [
+    "acknowledge the receipt the below complaint",
+    "acknowledge receipt below complaint",
+    "acknowledge the receipt below complaint",
+    "receipt of the below complaint",
+    "receipt the below complaint",
+]
 
-print(f"PPM wrong total : {len(df_ppm_wrong)}")
-print(f"\n── PPM misclassified as ─────────────────────────────────────")
-print(df_ppm_wrong["predicted_class"].value_counts())
+def classify_email(row):
 
-# ── What words are in wrong PPM emails ───────────────────────────────────────
-from collections import Counter
-import re
+    subject  = str(row["subject"]).lower()   if pd.notna(row["subject"])   else ""
+    body     = str(row["pure_body"]).lower() if pd.notna(row["pure_body"]) else ""
+    combined = f"{subject} {body}"
+    words    = set(re.findall(r"\b[a-zA-Z]{3,}\b", combined))
 
-all_text = " ".join(
-    (df_ppm_wrong["subject"].fillna("") + " " + 
-     df_ppm_wrong["pure_body"].fillna("")).tolist()
-).lower()
+    # ── Pre-compute all hits ───────────────────────────────────────────────────
+    argus_hits        = [w for w in ARGUS_TRIGGER          if w in words]
+    ppm_strong_hits   = [w for w in PPM_STRONG_TRIGGER     if w in words]
+    ppm_weak_hits     = [w for w in PPM_WEAK_TRIGGER       if w in words]
+    dsd_hits          = [w for w in DSD_TRIGGER            if w in words]
+    followup_hits     = [w for w in FOLLOWUP_UNIQUE_WORDS  if w in words]
+    overlap_hits      = [w for w in OVERLAP_WORDS          if w in words]
+    all_ppm_hits      = ppm_strong_hits + ppm_weak_hits
 
-words     = re.findall(r"\b[a-zA-Z]{3,}\b", all_text)
-words     = [w for w in words if w not in stop_words]
-counter   = Counter(words)
+    has_acknowledge   = any(w in words for w in DSD_TRIGGER)
+    has_cqa_required  = all(w in words for w in CQA_REQUIRED_WORDS)
+    has_cqa_invest    = any(w in words for w in CQA_INVESTIGATE_WORDS)
+    has_cqa_device    = any(w in words for w in CQA_DEVICE_WORDS)
 
-print(f"\n── Top words in wrong PPM emails ────────────────────────────")
-print(f"   {'Word':<25} {'Count':>6}")
-print(f"   {'─'*35}")
-for word, count in counter.most_common(30):
-    in_trigger = word in PPM_STRONG_TRIGGER or word in PPM_WEAK_TRIGGER
-    flag       = "✅ already" if in_trigger else "⬅️  missing"
-    print(f"   {word:<25} {count:>6}  {flag}")
+    # ✅ Phrase check — exact template matching
+    has_cqa_phrase    = any(phrase in combined for phrase in CQA_PHRASES)
 
-# ── Sample wrong PPM bodies ───────────────────────────────────────────────────
-print(f"\n── Sample wrong PPM bodies ──────────────────────────────────")
-for i, row in df_ppm_wrong.head(5).iterrows():
-    print(f"\nPredicted as : {row['predicted_class']}")
-    print(f"Body         : {row['pure_body'][:400]}")
-    print("─" * 60)
+    has_batch_invest  = ("batch" in words or "preliminary" in words or
+                         "discrepancy" in words or "analytical" in words)
 
+    # ── Rule 1: Argus ID ──────────────────────────────────────────────────────
+    if argus_hits:
+        return pd.Series({
+            "predicted_class" : "Argus ID",
+            "confidence"      : 0.97,
+            "rule_triggered"  : "argus_trigger",
+            "matched_keywords": str(argus_hits)
+        })
 
-## next code block
+    # ── Rule 2: PPM Strong ────────────────────────────────────────────────────
+    if ppm_strong_hits:
+        confidence = min(0.60 + (len(all_ppm_hits) * 0.10), 0.99)
+        return pd.Series({
+            "predicted_class" : "PPM Request",
+            "confidence"      : round(confidence, 2),
+            "rule_triggered"  : f"ppm_strong_{len(ppm_strong_hits)}_matched",
+            "matched_keywords": str(all_ppm_hits)
+        })
 
-# ── CQA wrong breakdown ───────────────────────────────────────────────────────
-df_cqa_wrong = df_5class[
-    (df_5class["actual_class"]    == "CQA Acknowledgement") &
-    (df_5class["predicted_class"] != "CQA Acknowledgement")
-].copy()
+    # ── Rule 3: CQA Device Resolution ─────────────────────────────────────────
+    if has_cqa_device:
+        return pd.Series({
+            "predicted_class" : "CQA Acknowledgement",
+            "confidence"      : 0.95,
+            "rule_triggered"  : "cqa_device_trigger",
+            "matched_keywords": str([w for w in CQA_DEVICE_WORDS if w in words])
+        })
 
-print(f"\nCQA wrong total : {len(df_cqa_wrong)}")
-print(f"\n── CQA misclassified as ─────────────────────────────────────")
-print(df_cqa_wrong["predicted_class"].value_counts())
+    # ── Rule 4: CQA Phrase Match ───────────────────────────────────────────────
+    if has_cqa_phrase:
+        return pd.Series({
+            "predicted_class" : "CQA Acknowledgement",
+            "confidence"      : 0.97,
+            "rule_triggered"  : "cqa_phrase_trigger",
+            "matched_keywords": str([p for p in CQA_PHRASES if p in combined])
+        })
 
-# ── What words are in wrong CQA emails ───────────────────────────────────────
-all_text = " ".join(
-    (df_cqa_wrong["subject"].fillna("") + " " + 
-     df_cqa_wrong["pure_body"].fillna("")).tolist()
-).lower()
+    # ── Rule 5: CQA Investigation ─────────────────────────────────────────────
+    if has_cqa_required and has_cqa_invest and not has_batch_invest:
+        return pd.Series({
+            "predicted_class" : "CQA Acknowledgement",
+            "confidence"      : 0.97,
+            "rule_triggered"  : "cqa_invest_trigger",
+            "matched_keywords": str(
+                [w for w in CQA_REQUIRED_WORDS    if w in words] +
+                [w for w in CQA_INVESTIGATE_WORDS if w in words]
+            )
+        })
 
-words   = re.findall(r"\b[a-zA-Z]{3,}\b", all_text)
-words   = [w for w in words if w not in stop_words]
-counter = Counter(words)
+    # ── Rule 6: PPM Weak ──────────────────────────────────────────────────────
+    if len(ppm_weak_hits) >= PPM_MIN_MATCHES and not has_cqa_required:
+        confidence = min(0.50 + (len(ppm_weak_hits) * 0.10), 0.99)
+        return pd.Series({
+            "predicted_class" : "PPM Request",
+            "confidence"      : round(confidence, 2),
+            "rule_triggered"  : f"ppm_weak_{len(ppm_weak_hits)}_matched",
+            "matched_keywords": str(ppm_weak_hits)
+        })
 
-print(f"\n── Top words in wrong CQA emails ────────────────────────────")
-print(f"   {'Word':<25} {'Count':>6}  {'% of wrong CQA':>15}")
-print(f"   {'─'*50}")
-for word, count in counter.most_common(30):
-    pct        = round(count / len(df_cqa_wrong) * 100, 1)
-    in_trigger = word in CQA_REQUIRED_WORDS or word in CQA_INVESTIGATE_WORDS or word in CQA_DEVICE_WORDS
-    flag       = "✅ already" if in_trigger else "⬅️  missing"
-    print(f"   {word:<25} {count:>6}  {pct:>14}%  {flag}")
+    # ── Rule 7: DSD Acknowledgement ───────────────────────────────────────────
+    if dsd_hits:
+        return pd.Series({
+            "predicted_class" : "DSD Acknowledgement",
+            "confidence"      : 0.97,
+            "rule_triggered"  : "dsd_trigger",
+            "matched_keywords": str(dsd_hits)
+        })
 
-# ── Sample wrong CQA bodies ───────────────────────────────────────────────────
-print(f"\n── Sample wrong CQA bodies ──────────────────────────────────")
-for i, row in df_cqa_wrong.head(5).iterrows():
-    print(f"\nPredicted as : {row['predicted_class']}")
-    print(f"Body         : {row['pure_body'][:400]}")
-    print("─" * 60)
+    # ── Rule 8: For Follow Up ─────────────────────────────────────────────────
+    if len(followup_hits) >= FOLLOWUP_MIN_MATCHES:
+        confidence = min(0.50 + (len(followup_hits) * 0.10), 0.99)
+        return pd.Series({
+            "predicted_class" : "For Follow Up",
+            "confidence"      : round(confidence, 2),
+            "rule_triggered"  : f"followup_{len(followup_hits)}_words_matched",
+            "matched_keywords": str(followup_hits)
+        })
 
+    # ── Rule 9: Weak Follow Up ────────────────────────────────────────────────
+    if len(followup_hits) == 1 and len(overlap_hits) >= 2:
+        return pd.Series({
+            "predicted_class" : "For Follow Up",
+            "confidence"      : 0.45,
+            "rule_triggered"  : "followup_weak_signal",
+            "matched_keywords": str(followup_hits + overlap_hits)
+        })
+
+    # ── Rule 10: Unclassified ─────────────────────────────────────────────────
+    return pd.Series({
+        "predicted_class" : "Unclassified",
+        "confidence"      : 0.0,
+        "rule_triggered"  : "no_match",
+        "matched_keywords": "[]"
+    })
+
+print("✅ classify_email updated — 10 rules")
