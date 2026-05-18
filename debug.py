@@ -8,3 +8,14 @@ df_live["actual_body"] = df_live.apply(
         else ""
     ), axis=1
 )
+
+
+df_live["pure_body"] = df_live.apply(
+    lambda row: (
+        row["pure_body"]
+        if pd.notna(row["pure_body"]) and len(str(row["pure_body"]).strip()) > 10
+        else row["bodyPreview"]
+        if pd.notna(row["bodyPreview"]) and len(str(row["bodyPreview"]).strip()) > 10
+        else ""
+    ), axis=1
+)
