@@ -1,208 +1,164 @@
 # =============================================================================
-# CLASSIFICATION.PY — Rule Engine + Scoring
-# Handles: word baskets, classify_email function (5 classes, 10 rules)
-# To add new class: add trigger list + new rule in classify_email()
+# LOADER.PY — SharePoint Write Functions
+# Handles: save raw file, save formatted recon file, upload log
 # =============================================================================
 
-import re
+import requests
 import pandas as pd
+import urllib3
+from io import BytesIO
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+
+import config
 from logger import log
 
-
-# =============================================================================
-# WORD BASKETS — Update here to tune classification
-# =============================================================================
-
-# ── CQA Acknowledgement ───────────────────────────────────────────────────────
-CQA_REQUIRED_WORDS     = ["receipt", "complaint"]
-CQA_INVESTIGATE_WORDS  = ["revert", "findings", "investigate", "investigation"]
-CQA_DEVICE_WORDS       = ["inhaler", "troubleshooting", "logging"]
-CQA_DEVICE_MIN_MATCHES = 2
-
-CQA_PHRASES = [
-    "acknowledge the receipt the below complaint",
-    "acknowledge receipt below complaint",
-    "acknowledge the receipt below complaint",
-    "receipt of the below complaint",
-    "receipt the below complaint",
-]
-
-# ── PPM Request ───────────────────────────────────────────────────────────────
-PPM_STRONG_TRIGGER = ["prepaid", "mailer", "ppm"]
-PPM_WEAK_TRIGGER   = [
-    "initiated",   "investigated",
-    "revert",      "investigate",
-    "formoterol",  "zone",
-    "code",        "ltd",
-]
-PPM_MIN_MATCHES    = 2
-
-# ── Argus ID ──────────────────────────────────────────────────────────────────
-ARGUS_TRIGGER = ["argus"]
-
-# ── DSD Acknowledgement ───────────────────────────────────────────────────────
-DSD_TRIGGER = [
-    "acknowledge",     "acknowledged",
-    "acknowledgement", "acknowledgment",
-]
-
-# ── For Follow Up ─────────────────────────────────────────────────────────────
-FOLLOWUP_UNIQUE_WORDS = [
-    "investigation", "batch",       "sample",
-    "observed",      "patient",     "discrepancy",
-    "found",         "were",        "preliminary",
-    "defect",        "analytical",  "records",
-    "adverse",       "reported",    "team",
-    "kindly",        "below",       "cipla",
-    "follow",        "response",    "share",
-    "provide",       "medical",     "final",
-    "recon",         "information", "reporter",
-    "qinecsa",       "confirm",     "note",
-    "cipsc",         "reconciliation",
-]
-FOLLOWUP_MIN_MATCHES = 3
-
-# ── Overlap words — weak supporting signal ────────────────────────────────────
-OVERLAP_WORDS = [
-    "colleague", "below",     "find",
-    "case",      "greetings", "receipt",
-]
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 # =============================================================================
-# CLASSIFY EMAIL — 5 Classes, 10 Rules
-# Priority: Argus → PPM Strong → CQA Device → CQA Phrase →
-#           CQA Invest → PPM Weak → DSD → Follow Up → Weak FU → Unclassified
+# SAVE RAW CLASSIFIED FILE TO SHAREPOINT
 # =============================================================================
 
-def classify_email(row):
-    """Classify a single email row based on rule engine"""
+def save_raw_file(df, token, sp_site_id, start_date, start_time, end_date, end_time):
+    """Save classified emails dataframe to SharePoint raw_file folder"""
 
-    subject  = str(row["subject"]).lower()   if pd.notna(row["subject"])   else ""
-    body     = str(row["pure_body"]).lower() if pd.notna(row["pure_body"]) else ""
-    combined = f"{subject} {body}"
-    words    = set(re.findall(r"\b[a-zA-Z]{3,}\b", combined))
+    file_name = (
+        f"classified_emails_{start_date}_{start_time.replace(':','')}"
+        f"_to_{end_date}_{end_time.replace(':','')}_IST.xlsx"
+    )
 
-    # ── Pre-compute all hits ───────────────────────────────────────────────────
-    argus_hits       = [w for w in ARGUS_TRIGGER         if w in words]
-    ppm_strong_hits  = [w for w in PPM_STRONG_TRIGGER    if w in words]
-    ppm_weak_hits    = [w for w in PPM_WEAK_TRIGGER       if w in words]
-    dsd_hits         = [w for w in DSD_TRIGGER            if w in words]
-    followup_hits    = [w for w in FOLLOWUP_UNIQUE_WORDS  if w in words]
-    overlap_hits     = [w for w in OVERLAP_WORDS          if w in words]
-    cqa_device_hits  = [w for w in CQA_DEVICE_WORDS       if w in words]
-    all_ppm_hits     = ppm_strong_hits + ppm_weak_hits
+    try:
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            df.to_excel(writer, sheet_name="Classified Emails", index=False)
+        buffer.seek(0)
 
-    has_cqa_device   = len(cqa_device_hits) >= CQA_DEVICE_MIN_MATCHES
-    has_cqa_required = all(w in words for w in CQA_REQUIRED_WORDS)
-    has_cqa_invest   = any(w in words for w in CQA_INVESTIGATE_WORDS)
-    has_cqa_phrase   = any(phrase in combined for phrase in CQA_PHRASES)
-    has_batch_invest = any(w in words for w in ["batch","preliminary","discrepancy","analytical"])
+        url = (
+            f"https://graph.microsoft.com/v1.0/sites/{sp_site_id}"
+            f"/drives/{config.SP_DRIVE_ID}/root:{config.SP_RAW_FOLDER}/{file_name}:/content"
+        )
+        headers_upload = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        }
+        resp = requests.put(url, headers=headers_upload, data=buffer.read(), verify=False)
 
-    # ── Rule 1: Argus ID ──────────────────────────────────────────────────────
-    if argus_hits:
-        return pd.Series({
-            "predicted_class" : "Argus ID",
-            "confidence"      : 0.97,
-            "rule_triggered"  : "argus_trigger",
-            "matched_keywords": str(argus_hits)
-        })
+        if resp.status_code in [200, 201]:
+            log(f"Raw file saved : {config.SP_RAW_FOLDER}/{file_name}")
+        else:
+            log(f"Raw file save failed : {resp.status_code}", "ERROR")
 
-    # ── Rule 2: PPM Strong ────────────────────────────────────────────────────
-    if ppm_strong_hits:
-        confidence = min(0.60 + (len(all_ppm_hits) * 0.10), 0.99)
-        return pd.Series({
-            "predicted_class" : "PPM Request",
-            "confidence"      : round(confidence, 2),
-            "rule_triggered"  : f"ppm_strong_{len(ppm_strong_hits)}_matched",
-            "matched_keywords": str(all_ppm_hits)
-        })
-
-    # ── Rule 3: CQA Device ────────────────────────────────────────────────────
-    if has_cqa_device:
-        return pd.Series({
-            "predicted_class" : "CQA Acknowledgement",
-            "confidence"      : 0.95,
-            "rule_triggered"  : "cqa_device_trigger",
-            "matched_keywords": str(cqa_device_hits)
-        })
-
-    # ── Rule 4: CQA Phrase ────────────────────────────────────────────────────
-    if has_cqa_phrase:
-        return pd.Series({
-            "predicted_class" : "CQA Acknowledgement",
-            "confidence"      : 0.97,
-            "rule_triggered"  : "cqa_phrase_trigger",
-            "matched_keywords": str([p for p in CQA_PHRASES if p in combined])
-        })
-
-    # ── Rule 5: CQA Investigation ─────────────────────────────────────────────
-    if has_cqa_required and has_cqa_invest and not has_batch_invest:
-        return pd.Series({
-            "predicted_class" : "CQA Acknowledgement",
-            "confidence"      : 0.97,
-            "rule_triggered"  : "cqa_invest_trigger",
-            "matched_keywords": str(
-                [w for w in CQA_REQUIRED_WORDS    if w in words] +
-                [w for w in CQA_INVESTIGATE_WORDS if w in words]
-            )
-        })
-
-    # ── Rule 6: PPM Weak ──────────────────────────────────────────────────────
-    if len(ppm_weak_hits) >= PPM_MIN_MATCHES and not has_cqa_required:
-        confidence = min(0.50 + (len(ppm_weak_hits) * 0.10), 0.99)
-        return pd.Series({
-            "predicted_class" : "PPM Request",
-            "confidence"      : round(confidence, 2),
-            "rule_triggered"  : f"ppm_weak_{len(ppm_weak_hits)}_matched",
-            "matched_keywords": str(ppm_weak_hits)
-        })
-
-    # ── Rule 7: DSD Acknowledgement ───────────────────────────────────────────
-    if dsd_hits and len(followup_hits) < 4:
-        return pd.Series({
-            "predicted_class" : "DSD Acknowledgement",
-            "confidence"      : 0.97,
-            "rule_triggered"  : "dsd_trigger",
-            "matched_keywords": str(dsd_hits)
-        })
-
-    # ── Rule 8: For Follow Up ─────────────────────────────────────────────────
-    if len(followup_hits) >= FOLLOWUP_MIN_MATCHES and len(all_ppm_hits) < 3:
-        confidence = min(0.50 + (len(followup_hits) * 0.10), 0.99)
-        return pd.Series({
-            "predicted_class" : "For Follow Up",
-            "confidence"      : round(confidence, 2),
-            "rule_triggered"  : f"followup_{len(followup_hits)}_words_matched",
-            "matched_keywords": str(followup_hits)
-        })
-
-    # ── Rule 9: Weak Follow Up ────────────────────────────────────────────────
-    if len(followup_hits) == 1 and len(overlap_hits) >= 2:
-        return pd.Series({
-            "predicted_class" : "For Follow Up",
-            "confidence"      : 0.45,
-            "rule_triggered"  : "followup_weak_signal",
-            "matched_keywords": str(followup_hits + overlap_hits)
-        })
-
-    # ── Rule 10: Unclassified ─────────────────────────────────────────────────
-    return pd.Series({
-        "predicted_class" : "Unclassified",
-        "confidence"      : 0.0,
-        "rule_triggered"  : "no_match",
-        "matched_keywords": "[]"
-    })
+    except Exception as e:
+        log(f"save_raw_file error : {str(e)}", "ERROR")
 
 
-def run_classification(df):
-    """Apply classify_email to all rows and return df with results"""
-    log("Running classification...")
-    df[["predicted_class", "confidence",
-        "rule_triggered",  "matched_keywords"]] = df.apply(classify_email, axis=1)
+# =============================================================================
+# BUILD RECON DATAFRAME
+# =============================================================================
 
-    log("Classification Complete")
-    for cls, cnt in df["predicted_class"].value_counts().items():
-        log(f"  {cls:<25} : {cnt}")
-    log(f"Total : {len(df)} | High conf (>0.7): {(df['confidence'] > 0.7).sum()} | Low conf (<0.4): {(df['confidence'] < 0.4).sum()}")
-    return df
+def build_recon_df(df_live):
+    """Build the recon dataframe from classified emails"""
+
+    df_recon = pd.DataFrame()
+    df_recon["From"]                 = df_live["sender_name"]
+    df_recon["to_recipients"]        = df_live["to_recipients"]
+    df_recon["Subject"]              = df_live["subject"]
+    df_recon["Received Time"]        = df_live["time"]
+    df_recon["Received Date"]        = pd.to_datetime(df_live["date"]).dt.strftime("%d-%b-%y")
+    df_recon["Owner"]                = ""
+    df_recon["Action"]               = ""
+    df_recon["Status"]               = ""
+    df_recon["actual_body"]          = df_live["actual_body"]
+    df_recon["Comments"]             = df_live["predicted_class"]
+    df_recon["Checked by"]           = ""
+    df_recon["TAT status"]           = ""
+    df_recon["Communication status"] = ""
+    df_recon["case_number"]          = df_live["case_number"]
+
+    # Sort by EST time
+    df_recon["sort_dt"] = pd.to_datetime(
+        df_live["date"].astype(str) + " " +
+        df_live["time"].str.extract(r"(\d{2}:\d{2} [AP]M)")[0],
+        format="%Y-%m-%d %I:%M %p",
+        errors="coerce"
+    )
+    df_recon = df_recon.sort_values("sort_dt", ascending=True).reset_index(drop=True)
+    df_recon = df_recon.drop(columns=["sort_dt"])
+
+    log(f"Recon dataframe built : {len(df_recon)} rows")
+    return df_recon
+
+
+# =============================================================================
+# SAVE FORMATTED RECON FILE TO SHAREPOINT
+# =============================================================================
+
+def save_recon_file(df_recon, token, sp_site_id, start_date, start_time, end_date, end_time):
+    """Save formatted recon file with header styling to SharePoint landing zone"""
+
+    file_name = (
+        f"email_recon_{start_date}_{start_time.replace(':','')}"
+        f"_to_{end_date}_{end_time.replace(':','')}_IST.xlsx"
+    )
+
+    try:
+        # ── Write to buffer ───────────────────────────────────────────────────
+        buffer = BytesIO()
+        df_recon.to_excel(buffer, index=False)
+        buffer.seek(0)
+
+        # ── Apply formatting ──────────────────────────────────────────────────
+        wb = load_workbook(buffer)
+        ws = wb.active
+
+        header_fill  = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
+        header_font  = Font(bold=True, color="000000")
+        header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        thin_border  = Border(
+            left=Side(style="thin"),  right=Side(style="thin"),
+            top=Side(style="thin"),   bottom=Side(style="thin")
+        )
+
+        for cell in ws[1]:
+            cell.fill      = header_fill
+            cell.font      = header_font
+            cell.alignment = header_align
+            cell.border    = thin_border
+
+        for col in ws.columns:
+            max_length = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                try:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+                except:
+                    pass
+            ws.column_dimensions[col_letter].width = min(max_length + 4, 40)
+
+        ws.freeze_panes = "A2"
+
+        # ── Save formatted to new buffer ──────────────────────────────────────
+        formatted_buffer = BytesIO()
+        wb.save(formatted_buffer)
+        formatted_buffer.seek(0)
+
+        # ── Upload to SharePoint ──────────────────────────────────────────────
+        url = (
+            f"https://graph.microsoft.com/v1.0/sites/{sp_site_id}"
+            f"/drives/{config.SP_DRIVE_ID}/root:{config.SP_RECON_FOLDER}/{file_name}:/content"
+        )
+        headers_upload = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        }
+        resp = requests.put(url, headers=headers_upload, data=formatted_buffer.read(), verify=False)
+
+        if resp.status_code in [200, 201]:
+            log(f"Recon file saved : {config.SP_RECON_FOLDER}/{file_name}")
+        else:
+            log(f"Recon file save failed : {resp.status_code}", "ERROR")
+
+    except Exception as e:
+        log(f"save_recon_file error : {str(e)}", "ERROR")
