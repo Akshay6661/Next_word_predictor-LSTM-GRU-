@@ -23,3 +23,18 @@ for drive in resp.json().get("value", []):
     print(f"   Drive ID : {drive['id']}")
     print(f"   Name     : {drive['name']}")
     print("─" * 50)
+
+
+
+SP_DRIVE_ID = "your-drive-id"   # ← paste your drive id here
+
+# ── List root folders ─────────────────────────────────────────────────────────
+resp = requests.get(
+    f"https://graph.microsoft.com/v1.0/sites/{SP_SITE_ID}/drives/{SP_DRIVE_ID}/root/children",
+    headers=HEADERS, verify=False
+)
+
+print("── Folders at Root ──────────────────────────────────────")
+for item in resp.json().get("value", []):
+    item_type = "📁" if "folder" in item else "📄"
+    print(f"   {item_type} {item['name']}")
