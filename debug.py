@@ -71,3 +71,26 @@ if resp.status_code == 200:
 else:
     print(f"❌ Raw folder not found : {resp.status_code}")
     print(resp.json())
+
+
+
+#puling
+from datetime import datetime, timedelta
+import pytz
+
+# ── Auto calculate IST date range ─────────────────────────────────────────────
+ist = pytz.timezone("Asia/Kolkata")
+now = datetime.now(ist)
+
+# ── End   = Today      09:29:59 IST ──────────────────────────────────────────
+# ── Start = Yesterday  09:30:00 IST ──────────────────────────────────────────
+end_dt   = now.replace(hour=9, minute=29, second=59, microsecond=0)
+start_dt = end_dt.replace(hour=9, minute=30, second=0) - timedelta(days=1)
+
+START_DATE = start_dt.strftime("%Y-%m-%d")
+START_TIME = start_dt.strftime("%H:%M:%S")   # 09:30:00
+END_DATE   = end_dt.strftime("%Y-%m-%d")
+END_TIME   = end_dt.strftime("%H:%M:%S")     # 09:29:59
+
+print(f"✅ Start : {START_DATE} {START_TIME} IST")
+print(f"✅ End   : {END_DATE}   {END_TIME}   IST")
