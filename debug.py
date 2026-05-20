@@ -1,12 +1,14 @@
 # =============================================================================
 # MAIN.PY — Pipeline Orchestrator
 # Entry point — imports and runs all modules in order
-# Run: python main.py
+# Run locally  : python main.py
+# Run on Lambda: triggered by EventBridge daily at 9:30 AM IST
 # =============================================================================
 
 import msal
 import requests
 import traceback
+import pandas as pd
 import urllib3
 
 import config
@@ -61,10 +63,10 @@ LOG_FILE_NAME = (
 
 
 # =============================================================================
-# MAIN PIPELINE
+# CORE PIPELINE — shared by both local run and Lambda
 # =============================================================================
 
-def main():
+def run_pipeline():
     TOKEN      = None
     SP_SITE_ID = None
 
@@ -75,13 +77,13 @@ def main():
         log(f"To   : {config.END_DATE}   {config.END_TIME}   IST")
         log("=" * 60)
 
-        # ── Auth ──────────────────────────────────────────────────────────────
+        # Step 0: Auth
         log("Step 0 : Authenticating...")
-        TOKEN      = get_access_token()
+        TOKEN               = get_access_token()
         SP_SITE_ID, HEADERS = get_site_id(TOKEN)
         log("Authentication successful")
 
-        # ── Step 1: Fetch Emails ──────────────────────────────────────────────
+        # Step 1: Fetch
         log("Step 1 : Fetching emails...")
         df_live = fetch_all_emails(
             headers    = HEADERS,
@@ -91,7 +93,7 @@ def main():
             end_time   = config.END_TIME
         )
 
-        # ── Domain Filter ─────────────────────────────────────────────────────
+        # Domain filter
         if config.ENABLE_DOMAIN_FILTER and not df_live.empty:
             before  = len(df_live)
             df_live = df_live[
@@ -102,24 +104,23 @@ def main():
             log(f"Domain filter — Before: {before} | After: {len(df_live)}")
 
         if df_live.empty:
-            log("No emails found — check date range or credentials", "WARNING")
-            return
+            log("No emails found", "WARNING")
+            return {"statusCode": 200, "body": "No emails found"}
 
-        # ── Step 2: Process Datetime + Case Number ────────────────────────────
+        # Step 2: Datetime + case number
         log("Step 2 : Processing datetime + case number...")
         df_live = process_datetime_and_case(df_live)
 
-        # ── Step 3: Extract Body ──────────────────────────────────────────────
+        # Step 3: Extract body
         log("Step 3 : Extracting body content...")
         df_live = extract_new_content(df_live)
 
-        # ── Step 3b/3c: Fallback Chain ────────────────────────────────────────
+        # Step 3b/3c: Fallback
         log("Step 3b: Applying fallback chain...")
         df_live = apply_fallback(df_live)
 
-        # ── Step 4: Sort by EST Time ──────────────────────────────────────────
+        # Step 4: Sort
         log("Step 4 : Sorting by EST time...")
-        import pandas as pd
         df_live["sort_dt"] = pd.to_datetime(
             df_live["date"].astype(str) + " " + df_live["time"].astype(str),
             errors="coerce"
@@ -127,12 +128,12 @@ def main():
         df_live = df_live.sort_values("sort_dt", ascending=True).reset_index(drop=True)
         df_live = df_live.drop(columns={"sort_dt"})
 
-        # ── Step 5: Classify ──────────────────────────────────────────────────
+        # Step 5: Classify
         log("Step 5 : Classifying emails...")
         df_live = run_classification(df_live)
 
-        # ── Step 6: Save Raw File ─────────────────────────────────────────────
-        log("Step 6 : Saving raw file to SharePoint...")
+        # Step 6: Save raw
+        log("Step 6 : Saving raw file...")
         save_raw_file(
             df         = df_live,
             token      = TOKEN,
@@ -143,12 +144,12 @@ def main():
             end_time   = config.END_TIME
         )
 
-        # ── Step 7: Build Recon ───────────────────────────────────────────────
+        # Step 7: Build recon
         log("Step 7 : Building recon file...")
         df_recon = build_recon_df(df_live)
 
-        # ── Step 8: Save Recon File ───────────────────────────────────────────
-        log("Step 8 : Saving recon file to SharePoint...")
+        # Step 8: Save recon
+        log("Step 8 : Saving recon file...")
         save_recon_file(
             df_recon   = df_recon,
             token      = TOKEN,
@@ -163,12 +164,14 @@ def main():
         log("PIPELINE COMPLETE")
         log("=" * 60)
 
+        return {"statusCode": 200, "body": f"Processed {len(df_live)} emails"}
+
     except Exception as e:
         log(f"PIPELINE FAILED : {str(e)}", "ERROR")
         log(traceback.format_exc(), "ERROR")
+        return {"statusCode": 500, "body": str(e)}
 
     finally:
-        # ── Always save log to SharePoint ─────────────────────────────────────
         if TOKEN and SP_SITE_ID:
             log("Saving log to SharePoint...")
             save_log_to_sharepoint(
@@ -181,8 +184,18 @@ def main():
 
 
 # =============================================================================
-# ENTRY POINT
+# LAMBDA HANDLER — triggered by EventBridge
+# =============================================================================
+
+def lambda_handler(event, context):
+    """AWS Lambda entry point — EventBridge triggers this daily at 9:30 AM IST"""
+    log("Lambda triggered")
+    return run_pipeline()
+
+
+# =============================================================================
+# LOCAL ENTRY POINT — run directly with: python main.py
 # =============================================================================
 
 if __name__ == "__main__":
-    main()
+    run_pipeline()
