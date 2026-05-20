@@ -1,203 +1,182 @@
-# ── From your browser URL ─────────────────────────────────────────────────────
-HOSTNAME  = "yourcompany.sharepoint.com"   # ← from browser URL
-SITE_NAME = "FinanceTeam"                  # ← from browser URL /sites/SiteName
-
-resp = requests.get(
-    f"https://graph.microsoft.com/v1.0/sites/{HOSTNAME}:/sites/{SITE_NAME}",
-    headers=HEADERS, verify=False
-)
-
-SP_SITE_ID = resp.json()["id"]
-print(f"✅ Site Name : {resp.json()['displayName']}")
-print(f"✅ Site ID   : {SP_SITE_ID}")
-
-
-
-resp = requests.get(
-    f"https://graph.microsoft.com/v1.0/sites/{SP_SITE_ID}/drives",
-    headers=HEADERS, verify=False
-)
-
-print("── Available Drives ─────────────────────────────────────")
-for drive in resp.json().get("value", []):
-    print(f"   Drive ID : {drive['id']}")
-    print(f"   Name     : {drive['name']}")
-    print("─" * 50)
-
-
-
-SP_DRIVE_ID = "your-drive-id"   # ← paste your drive id here
-
-# ── List root folders ─────────────────────────────────────────────────────────
-resp = requests.get(
-    f"https://graph.microsoft.com/v1.0/sites/{SP_SITE_ID}/drives/{SP_DRIVE_ID}/root/children",
-    headers=HEADERS, verify=False
-)
-
-print("── Folders at Root ──────────────────────────────────────")
-for item in resp.json().get("value", []):
-    item_type = "📁" if "folder" in item else "📄"
-    print(f"   {item_type} {item['name']}")
-
-
-
-
-
-
-# ── Verify daily_landing_zone path ────────────────────────────────────────────
-recon_path = "/Analytics and Dashboards/daily_cipla_email/daily_landing_zone"
-
-resp = requests.get(
-    f"https://graph.microsoft.com/v1.0/sites/{SP_SITE_ID}/drives/{SP_DRIVE_ID}/root:{recon_path}",
-    headers=HEADERS, verify=False
-)
-
-if resp.status_code == 200:
-    print(f"✅ Recon folder found : {resp.json()['name']}")
-else:
-    print(f"❌ Recon folder not found : {resp.status_code}")
-    print(resp.json())
-
-# ── Verify raw_file path ──────────────────────────────────────────────────────
-raw_path = "/Analytics and Dashboards/daily_cipla_email/raw_file"
-
-resp = requests.get(
-    f"https://graph.microsoft.com/v1.0/sites/{SP_SITE_ID}/drives/{SP_DRIVE_ID}/root:{raw_path}",
-    headers=HEADERS, verify=False
-)
-
-if resp.status_code == 200:
-    print(f"✅ Raw folder found   : {resp.json()['name']}")
-else:
-    print(f"❌ Raw folder not found : {resp.status_code}")
-    print(resp.json())
-
-
-
-#puling
-from datetime import datetime, timedelta
-import pytz
-
-# ── Auto calculate IST date range ─────────────────────────────────────────────
-ist = pytz.timezone("Asia/Kolkata")
-now = datetime.now(ist)
-
-# ── End   = Today      09:29:59 IST ──────────────────────────────────────────
-# ── Start = Yesterday  09:30:00 IST ──────────────────────────────────────────
-end_dt   = now.replace(hour=9, minute=29, second=59, microsecond=0)
-start_dt = end_dt.replace(hour=9, minute=30, second=0) - timedelta(days=1)
-
-START_DATE = start_dt.strftime("%Y-%m-%d")
-START_TIME = start_dt.strftime("%H:%M:%S")   # 09:30:00
-END_DATE   = end_dt.strftime("%Y-%m-%d")
-END_TIME   = end_dt.strftime("%H:%M:%S")     # 09:29:59
-
-print(f"✅ Start : {START_DATE} {START_TIME} IST")
-print(f"✅ End   : {END_DATE}   {END_TIME}   IST")
-
-
-
-#loading path
-# ── SharePoint Folder Paths ───────────────────────────────────────────────────
-SP_RECON_FOLDER = "/Analytics and Dashboards/daily_cipla_email/daily_landing_zone"
-SP_RAW_FOLDER   = "/Analytics and Dashboards/daily_cipla_email/raw_file"
-
-
 # =============================================================================
-# CELL 10 — SAVE RAW FILE TO SHAREPOINT
+# MAIN.PY — Pipeline Orchestrator
+# Entry point — imports and runs all modules in order
+# Run: python main.py
 # =============================================================================
 
-from io import BytesIO
+import msal
+import requests
+import traceback
+import urllib3
 
-def write_to_sharepoint(df, folder_path, file_name):
+import config
+from logger import log, save_log_to_sharepoint, log_lines
+from extract import (
+    fetch_all_emails,
+    process_datetime_and_case,
+    extract_new_content,
+    apply_fallback
+)
+from classification import run_classification
+from loader import save_raw_file, build_recon_df, save_recon_file
 
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, sheet_name="Classified Emails", index=False)
-    buffer.seek(0)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    url = (
-        f"https://graph.microsoft.com/v1.0/sites/{SP_SITE_ID}"
-        f"/drives/{SP_DRIVE_ID}/root:{folder_path}/{file_name}:/content"
+# =============================================================================
+# AUTHENTICATION
+# =============================================================================
+
+def get_access_token():
+    app = msal.ConfidentialClientApplication(
+        config.CLIENT_ID,
+        authority=f"https://login.microsoftonline.com/{config.TENANT_ID}",
+        client_credential=config.CLIENT_SECRET
     )
-    headers_upload = {
-        "Authorization": f"Bearer {TOKEN}",
-        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    }
+    result = app.acquire_token_for_client(scopes=config.SCOPES)
+    if "access_token" not in result:
+        raise Exception(f"Auth failed: {result.get('error_description')}")
+    return result["access_token"]
 
-    resp = requests.put(url, headers=headers_upload, data=buffer.read(), verify=False)
 
-    if resp.status_code in [200, 201]:
-        print(f"✅ Saved successfully : {folder_path}/{file_name}")
-    else:
-        print(f"❌ Failed. Status     : {resp.status_code}")
-        print(resp.json())
+def get_site_id(token):
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    resp    = requests.get(
+        f"https://graph.microsoft.com/v1.0/sites/{config.HOSTNAME}:/sites/{config.SITE_NAME}",
+        headers=headers, verify=False
+    )
+    sp_site_id = resp.json()["id"]
+    log(f"Site Name : {resp.json()['displayName']}")
+    log(f"Site ID   : {sp_site_id}")
+    return sp_site_id, headers
 
-# ── Auto generated file name ───────────────────────────────────────────────────
-raw_file_name = f"classified_emails_{START_DATE}_{START_TIME.replace(':','')}_to_{END_DATE}_{END_TIME.replace(':','')}_IST.xlsx"
 
-# ── Upload to raw_file folder ─────────────────────────────────────────────────
-write_to_sharepoint(df_live, SP_RAW_FOLDER, raw_file_name)
+# =============================================================================
+# LOG FILE NAME
+# =============================================================================
 
-## for recon 
-# ── Auto generated recon file name ───────────────────────────────────────────
-recon_file_name = f"email_recon_{START_DATE}_{START_TIME.replace(':','')}_to_{END_DATE}_{END_TIME.replace(':','')}_IST.xlsx"
-
-# ── Save formatted recon to buffer ────────────────────────────────────────────
-buffer = BytesIO()
-df_recon.to_excel(buffer, index=False)
-buffer.seek(0)
-
-# ── Apply formatting ──────────────────────────────────────────────────────────
-wb = load_workbook(buffer)
-ws = wb.active
-
-header_fill  = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
-header_font  = Font(bold=True, color="000000")
-header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-thin_border  = Border(
-    left=Side(style="thin"), right=Side(style="thin"),
-    top=Side(style="thin"),  bottom=Side(style="thin")
+LOG_FILE_NAME = (
+    f"log_{config.START_DATE}_{config.START_TIME.replace(':','')}"
+    f"_to_{config.END_DATE}_{config.END_TIME.replace(':','')}_IST.txt"
 )
 
-for cell in ws[1]:
-    cell.fill      = header_fill
-    cell.font      = header_font
-    cell.alignment = header_align
-    cell.border    = thin_border
 
-for col in ws.columns:
-    max_length = 0
-    col_letter = col[0].column_letter
-    for cell in col:
-        try:
-            if cell.value:
-                max_length = max(max_length, len(str(cell.value)))
-        except:
-            pass
-    ws.column_dimensions[col_letter].width = min(max_length + 4, 40)
+# =============================================================================
+# MAIN PIPELINE
+# =============================================================================
 
-ws.freeze_panes = "A2"
+def main():
+    TOKEN      = None
+    SP_SITE_ID = None
 
-# ── Save formatted to new buffer ──────────────────────────────────────────────
-formatted_buffer = BytesIO()
-wb.save(formatted_buffer)
-formatted_buffer.seek(0)
+    try:
+        log("=" * 60)
+        log("PIPELINE START")
+        log(f"From : {config.START_DATE} {config.START_TIME} IST")
+        log(f"To   : {config.END_DATE}   {config.END_TIME}   IST")
+        log("=" * 60)
 
-# ── Upload to daily_landing_zone folder ───────────────────────────────────────
-url = (
-    f"https://graph.microsoft.com/v1.0/sites/{SP_SITE_ID}"
-    f"/drives/{SP_DRIVE_ID}/root:{SP_RECON_FOLDER}/{recon_file_name}:/content"
-)
-headers_upload = {
-    "Authorization": f"Bearer {TOKEN}",
-    "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-}
+        # ── Auth ──────────────────────────────────────────────────────────────
+        log("Step 0 : Authenticating...")
+        TOKEN      = get_access_token()
+        SP_SITE_ID, HEADERS = get_site_id(TOKEN)
+        log("Authentication successful")
 
-resp = requests.put(url, headers=headers_upload, data=formatted_buffer.read(), verify=False)
+        # ── Step 1: Fetch Emails ──────────────────────────────────────────────
+        log("Step 1 : Fetching emails...")
+        df_live = fetch_all_emails(
+            headers    = HEADERS,
+            start_date = config.START_DATE,
+            start_time = config.START_TIME,
+            end_date   = config.END_DATE,
+            end_time   = config.END_TIME
+        )
 
-if resp.status_code in [200, 201]:
-    print(f"✅ Recon saved : {SP_RECON_FOLDER}/{recon_file_name}")
-else:
-    print(f"❌ Failed      : {resp.status_code}")
-    print(resp.json())
+        # ── Domain Filter ─────────────────────────────────────────────────────
+        if config.ENABLE_DOMAIN_FILTER and not df_live.empty:
+            before  = len(df_live)
+            df_live = df_live[
+                df_live["sender_email"].apply(
+                    lambda x: any(domain in str(x).lower() for domain in config.FILTER_DOMAINS)
+                )
+            ].reset_index(drop=True)
+            log(f"Domain filter — Before: {before} | After: {len(df_live)}")
+
+        if df_live.empty:
+            log("No emails found — check date range or credentials", "WARNING")
+            return
+
+        # ── Step 2: Process Datetime + Case Number ────────────────────────────
+        log("Step 2 : Processing datetime + case number...")
+        df_live = process_datetime_and_case(df_live)
+
+        # ── Step 3: Extract Body ──────────────────────────────────────────────
+        log("Step 3 : Extracting body content...")
+        df_live = extract_new_content(df_live)
+
+        # ── Step 3b/3c: Fallback Chain ────────────────────────────────────────
+        log("Step 3b: Applying fallback chain...")
+        df_live = apply_fallback(df_live)
+
+        # ── Step 4: Sort by EST Time ──────────────────────────────────────────
+        log("Step 4 : Sorting by EST time...")
+        import pandas as pd
+        df_live["sort_dt"] = pd.to_datetime(
+            df_live["date"].astype(str) + " " + df_live["time"].astype(str),
+            errors="coerce"
+        )
+        df_live = df_live.sort_values("sort_dt", ascending=True).reset_index(drop=True)
+        df_live = df_live.drop(columns={"sort_dt"})
+
+        # ── Step 5: Classify ──────────────────────────────────────────────────
+        log("Step 5 : Classifying emails...")
+        df_live = run_classification(df_live)
+
+        # ── Step 6: Save Raw File ─────────────────────────────────────────────
+        log("Step 6 : Saving raw file to SharePoint...")
+        save_raw_file(
+            df         = df_live,
+            token      = TOKEN,
+            sp_site_id = SP_SITE_ID,
+            start_date = config.START_DATE,
+            start_time = config.START_TIME,
+            end_date   = config.END_DATE,
+            end_time   = config.END_TIME
+        )
+
+        # ── Step 7: Build Recon ───────────────────────────────────────────────
+        log("Step 7 : Building recon file...")
+        df_recon = build_recon_df(df_live)
+
+        # ── Step 8: Save Recon File ───────────────────────────────────────────
+        log("Step 8 : Saving recon file to SharePoint...")
+        save_recon_file(
+            df_recon   = df_recon,
+            token      = TOKEN,
+            sp_site_id = SP_SITE_ID,
+            start_date = config.START_DATE,
+            start_time = config.START_TIME,
+            end_date   = config.END_DATE,
+            end_time   = config.END_TIME
+        )
+
+        log("=" * 60)
+        log("PIPELINE COMPLETE")
+        log("=" * 60)
+
+    except Exception as e:
+        log(f"PIPELINE FAILED : {str(e)}", "ERROR")
+        log(traceback.format_exc(), "ERROR")
+
+    finally:
+        # ── Always save log to SharePoint ─────────────────────────────────────
+        if TOKEN and SP_SITE_ID:
+            log("Saving log to SharePoint...")
+            save_log_to_sharepoint(TOKEN, SP_SITE_ID, LOG_FILE_NAME)
+
+
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
+
+if __name__ == "__main__":
+    main()
