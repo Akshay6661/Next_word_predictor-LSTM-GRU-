@@ -1,22 +1,43 @@
-import boto3, json
+pip install langgraph langchain-aws langchain-core
 
-client = boto3.client("bedrock-runtime", region_name="us-east-1")
 
-body = json.dumps({
-    "anthropic_version": "bedrock-2023-05-31",
-    "max_tokens": 100,
-    "messages": [
-        {"role": "user", "content": "Say hello"}
-    ]
-})
+from langchain_aws import ChatBedrock
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import StateGraph, END
+from typing import TypedDict, Annotated
+import operator
 
-response = client.invoke_model(
-    # Add "us." prefix — this is the cross-region inference profile
-    modelId="us.anthropic.claude-sonnet-4-20250514-v1:0",
-    contentType="application/json",
-    accept="application/json",
-    body=body
+# 1. Connect Bedrock LLM
+llm = ChatBedrock(
+    model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+    region_name="us-east-1",
+    model_kwargs={
+        "max_tokens": 1000,
+        "temperature": 0
+    }
 )
 
-result = json.loads(response["body"].read())
-print(result["content"][0]["text"])
+# 2. Define State
+class AgentState(TypedDict):
+    messages: Annotated[list, operator.add]
+
+# 3. Define Node
+def call_llm(state: AgentState):
+    messages = state["messages"]
+    response = llm.invoke(messages)
+    return {"messages": [response]}
+
+# 4. Build Graph
+graph = StateGraph(AgentState)
+graph.add_node("llm", call_llm)
+graph.set_entry_point("llm")
+graph.add_edge("llm", END)
+
+app = graph.compile()
+
+# 5. Run
+result = app.invoke({
+    "messages": [HumanMessage(content="What is pharmacovigilance?")]
+})
+
+print(result["messages"][-1].content)
