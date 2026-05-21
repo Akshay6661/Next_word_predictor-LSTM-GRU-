@@ -1,24 +1,31 @@
-import boto3, json
+import boto3
 
-client = boto3.client("bedrock-runtime", region_name="us-east-1")
+client = boto3.client(
+    "bedrock-runtime",
+    region_name="us-east-1",
+    aws_access_key_id="YOUR_ACCESS_KEY",
+    aws_secret_access_key="YOUR_SECRET_KEY"
+)
 
-body = json.dumps({
-    "anthropic_version": "bedrock-2023-05-31",
-    "max_tokens": 100,
-    "messages": [
-        {"role": "user", "content": "Say hello"}
-    ]
-})
 
-try:
-    response = client.invoke_model(
-        modelId="anthropic.claude-sonnet-4-20250514-v1:0",
-        contentType="application/json",
-        accept="application/json",
-        body=body
-    )
-    result = json.loads(response["body"].read())
-    print(result["content"][0]["text"])
+import boto3
+session = boto3.session.Session()
+print("Region:",  session.region_name)
+print("Profile:", session.profile_name)
+credentials = session.get_credentials()
+print("Creds found:", credentials is not None)
 
-except Exception as e:
-    print(type(e).__name__, ":", e)
+
+============================================================
+Region: us-east-1
+============================================================
+ACTIVE     | anthropic.claude-sonnet-4-20250514-v1:0
+ACTIVE     | anthropic.claude-opus-4-20250514-v1:0
+ACTIVE     | anthropic.claude-3-haiku-20240307-v1:0
+LEGACY     | anthropic.claude-3-5-sonnet-20241022-v2:0
+...
+
+============================================================
+Region: ap-south-1
+============================================================
+Error: ... (likely no Bedrock support here)
