@@ -47,3 +47,17 @@ req = BedrockRequest(
     inference_config={"max_tokens": 500, "temperature": 0.0, "top_p": 0.9}
 )
 print(req.get_response())
+
+
+
+import os
+import pytz
+from datetime import datetime, timedelta
+
+CLIENT_ID     = os.environ.get("CLIENT_ID",     "")
+CLIENT_SECRET = os.environ.get("CLIENT_SECRET", "")
+TENANT_ID     = os.environ.get("TENANT_ID",     "")
+USER_EMAIL    = os.environ.get("USER_EMAIL",    "")
+HOSTNAME      = os.environ.get("HOSTNAME",      "")
+SITE_NAME     = os.environ.get("SITE_NAME",     "TransformationTeam")
+SP_DRIVE_ID   = os.environ.get("SP_DRIVE_ID",   "")
