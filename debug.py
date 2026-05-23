@@ -1,172 +1,192 @@
 import pandas as pd
 import re
 from difflib import SequenceMatcher
-from collections import Counter
+from collections import defaultdict
 
-# ── CONFIG ──────────────────────────────────────────────────────────────────
+# ── CONFIG ───────────────────────────────────────────────────────────────────
 INPUT_FILE        = "input.csv"
 OUTPUT_FILLED     = "output_filled.csv"
 OUTPUT_REVIEW     = "output_review_log.csv"
-
-# Column name aliases — adjust if your CSV headers differ
-COL_ITEM     = "Item"
-COL_I3       = "i3_Standard_item"
-COL_PAYABLE  = "Payable (P)/Not-Payable(NP)"   # or "Payable" etc.
-
-FUZZY_THRESHOLD   = 0.55   # min similarity score to accept a match (0–1)
+CONFIDENCE_ACCEPT = 0.50   # auto-fill if score >= this
+CONFIDENCE_FLAG   = 0.30   # suggest but flag for review if between this and ACCEPT
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 def normalize(text: str) -> str:
-    """Lowercase, strip punctuation, collapse whitespace."""
     text = str(text).lower()
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
-
 def tokenize(text: str) -> set:
     return set(normalize(text).split())
 
-
-def fuzzy_score(a: str, b: str) -> float:
-    return SequenceMatcher(None, normalize(a), normalize(b)).ratio()
-
-
-def token_overlap_score(item_blank: str, item_mapped: str) -> float:
+def score_pair(blank_norm: str, blank_tok: set,
+               mapped_norm: str, mapped_tok: set) -> float:
     """
-    Score based on how many tokens of the blank item appear in the mapped item
-    and vice versa (Jaccard-like, but weighted toward the shorter string).
+    Coverage-first scoring:
+      - Coverage  : % of blank's tokens found in mapped item  (most important)
+      - Precision : % of matched tokens relative to mapped item (avoids over-broad matches)
+      - Substring : bonus if blank string appears inside mapped string
+      - Fuzzy     : character-level similarity fallback
     """
-    t_blank  = tokenize(item_blank)
-    t_mapped = tokenize(item_mapped)
-    if not t_blank or not t_mapped:
+    shared = blank_tok & mapped_tok
+    if not shared:
         return 0.0
-    intersection = t_blank & t_mapped
-    # weight: intersection / min-length tokens (favour short blank items matching longer mapped ones)
-    return len(intersection) / min(len(t_blank), len(t_mapped))
 
+    coverage  = len(shared) / len(blank_tok)   if blank_tok   else 0.0
+    precision = len(shared) / len(mapped_tok)  if mapped_tok  else 0.0
 
-def combined_score(item_blank: str, item_mapped: str) -> float:
-    tok = token_overlap_score(item_blank, item_mapped)
-    fuz = fuzzy_score(item_blank, item_mapped)
-    # token overlap matters more for partial-word cases like BUDS vs EAR BUDS
-    return 0.65 * tok + 0.35 * fuz
+    # F1-style blend of coverage + precision
+    f1 = (2 * coverage * precision / (coverage + precision)
+          if (coverage + precision) > 0 else 0.0)
 
+    # Substring bonus — e.g. "bandage crepe" found inside "bandage crepe expiry"
+    substring_bonus = 0.25 if blank_norm in mapped_norm else 0.0
 
-def find_best_match(item_blank: str, mapped_df: pd.DataFrame):
-    """
-    Against all rows that already have an i3 value, find the best matching
-    i3_Standard_item using a vote+score approach.
-    """
-    scores = []
-    for _, row in mapped_df.iterrows():
-        score = combined_score(item_blank, row[COL_ITEM])
-        if score > 0:
-            scores.append((score, row[COL_I3]))
+    # Fuzzy character similarity (helps with typos like "nametaag" vs "nametag")
+    fuzzy = SequenceMatcher(None, blank_norm, mapped_norm).ratio()
 
-    if not scores:
-        return None, 0.0
-
-    # Group by i3 value → sum scores (voting: multiple items pointing to same i3 wins)
-    vote: dict = {}
-    for score, i3_val in scores:
-        vote[i3_val] = vote.get(i3_val, 0) + score
-
-    best_i3    = max(vote, key=vote.get)
-    best_score = vote[best_i3]
-
-    # Normalise score to 0–1 range for interpretability
-    max_possible = len(mapped_df)
-    norm_score = min(best_score / max_possible, 1.0) if max_possible else 0.0
-
-    # Raw best single-pair score for threshold check
-    raw_best = max(s for s, i3 in scores if i3 == best_i3)
-    return best_i3, raw_best
+    return min(1.0, 0.50 * f1
+                   + 0.25 * substring_bonus
+                   + 0.15 * coverage        # extra weight on coverage
+                   + 0.10 * fuzzy)
 
 
 def main():
-    # ── 1. Load & trim columns ───────────────────────────────────────────────
+    # ── 1. Load ──────────────────────────────────────────────────────────────
     df_raw = pd.read_csv(INPUT_FILE)
-    print(f"✔ Loaded {len(df_raw)} rows, {len(df_raw.columns)} columns")
+    print(f"✔  Loaded  : {len(df_raw):,} rows  |  {len(df_raw.columns)} columns")
 
-    # Auto-detect column names (case-insensitive partial match)
+    # Auto-detect the 3 columns
     col_map = {}
     for col in df_raw.columns:
-        col_lower = col.lower().strip()
-        if "item" == col_lower and "item" not in col_map:
+        cl = col.lower().strip()
+        if cl == "item" and "item" not in col_map:
             col_map["item"] = col
-        elif "i3" in col_lower:
+        elif "i3" in cl:
             col_map["i3"] = col
-        elif "payable" in col_lower or "p/np" in col_lower or "p)/not" in col_lower:
+        elif "payable" in cl or "p/np" in cl or "p)/not" in cl:
             col_map["payable"] = col
 
     missing = [k for k in ["item", "i3", "payable"] if k not in col_map]
     if missing:
-        print(f"\n⚠ Could not auto-detect columns: {missing}")
-        print("   Available columns:", list(df_raw.columns))
-        print("   Update COL_ITEM / COL_I3 / COL_PAYABLE at the top of the script.")
+        print(f"\n⚠  Could not auto-detect columns: {missing}")
+        print("   Columns found:", list(df_raw.columns))
+        print("   Please rename them to match Item / i3_Standard_item / Payable")
         return
 
-    # Rename to standard names & keep only 3 columns
     df = df_raw[[col_map["item"], col_map["i3"], col_map["payable"]]].copy()
-    df.columns = [COL_ITEM, COL_I3, COL_PAYABLE]
-    print(f"✔ Kept 3 columns: {list(df.columns)}")
+    df.columns = ["Item", "i3_Standard_item", "Payable"]
+    print(f"✔  Kept 3 columns: {list(df.columns)}")
 
-    # ── 2. Split mapped vs blank ─────────────────────────────────────────────
-    blank_mask = df[COL_I3].isna() | (df[COL_I3].astype(str).str.strip() == "")
-    df_mapped  = df[~blank_mask].copy()
-    df_blank   = df[blank_mask].copy()
+    # ── 2. Split mapped vs blank ──────────────────────────────────────────────
+    blank_mask = df["i3_Standard_item"].isna() | \
+                 (df["i3_Standard_item"].astype(str).str.strip() == "")
 
-    print(f"\n   Rows with i3 mapped : {len(df_mapped)}")
-    print(f"   Rows with i3 BLANK  : {len(df_blank)}")
+    df_mapped = df[~blank_mask].reset_index(drop=True)
+    df_blank  = df[blank_mask].copy()
+
+    print(f"\n   Mapped rows : {len(df_mapped):,}")
+    print(f"   Blank  rows : {len(df_blank):,}")
 
     if df_blank.empty:
-        print("\n✅ No blank rows found. Nothing to fill.")
+        print("\n✅ No blanks found.")
         df.to_csv(OUTPUT_FILLED, index=False)
         return
 
-    # ── 3. Fill blanks ───────────────────────────────────────────────────────
+    # ── 3. Pre-compute everything for mapped rows (once) ─────────────────────
+    print("\n⚙  Building inverted token index...")
+
+    mapped_items  = df_mapped["Item"].tolist()
+    mapped_i3     = df_mapped["i3_Standard_item"].tolist()
+    mapped_norms  = [normalize(x) for x in mapped_items]
+    mapped_tokens = [tokenize(x) for x in mapped_items]
+
+    # Inverted index: token → [row indices in mapped]
+    token_index: dict = defaultdict(list)
+    for i, toks in enumerate(mapped_tokens):
+        for tok in toks:
+            token_index[tok].append(i)
+
+    print(f"✔  Index built  :  {len(token_index):,} unique tokens")
+
+    # ── 4. Match blanks ───────────────────────────────────────────────────────
+    print("⚙  Matching blank rows...\n")
+
     review_log = []
 
     for idx, row in df_blank.iterrows():
-        item_val  = str(row[COL_ITEM]).strip()
-        best_i3, score = find_best_match(item_val, df_mapped)
+        item_val   = str(row["Item"]).strip()
+        norm_blank = normalize(item_val)
+        toks_blank = tokenize(item_val)
 
-        if best_i3 and score >= FUZZY_THRESHOLD:
-            df.at[idx, COL_I3] = best_i3
-            status = "AUTO_FILLED"
+        # --- Candidate lookup via token index ---
+        candidate_idx = set()
+        for tok in toks_blank:
+            candidate_idx.update(token_index.get(tok, []))
+
+        # --- Score each candidate ---
+        vote: dict = defaultdict(float)           # i3_val → cumulative score
+        best_single: dict = defaultdict(float)    # i3_val → best single-pair score
+
+        for ci in candidate_idx:
+            s = score_pair(norm_blank, toks_blank,
+                           mapped_norms[ci], mapped_tokens[ci])
+            i3_val = mapped_i3[ci]
+            vote[i3_val]        += s
+            best_single[i3_val]  = max(best_single[i3_val], s)
+
+        # --- Pick winner by vote ---
+        if vote:
+            best_i3    = max(vote, key=vote.get)
+            raw_score  = best_single[best_i3]
+            candidates = len(candidate_idx)
         else:
-            best_i3 = best_i3 or "NO_MATCH"
-            status  = "NEEDS_REVIEW"
+            best_i3    = "NO_MATCH"
+            raw_score  = 0.0
+            candidates = 0
+
+        # --- Decide status ---
+        if raw_score >= CONFIDENCE_ACCEPT:
+            df.at[idx, "i3_Standard_item"] = best_i3
+            status = "AUTO_FILLED"
+        elif raw_score >= CONFIDENCE_FLAG:
+            df.at[idx, "i3_Standard_item"] = best_i3   # fill but flag
+            status = "FILLED_REVIEW"                    # human should verify
+        else:
+            status = "NO_MATCH"
 
         review_log.append({
             "Row"              : idx,
-            COL_ITEM           : item_val,
+            "Item"             : item_val,
             "Suggested_i3"     : best_i3,
-            "Confidence_Score" : round(score, 3),
+            "Confidence"       : round(raw_score, 3),
+            "Candidates_Found" : candidates,
             "Status"           : status,
         })
 
-    # ── 4. Summary ───────────────────────────────────────────────────────────
-    review_df   = pd.DataFrame(review_log)
-    filled_cnt  = (review_df["Status"] == "AUTO_FILLED").sum()
-    review_cnt  = (review_df["Status"] == "NEEDS_REVIEW").sum()
+    # ── 5. Summary ────────────────────────────────────────────────────────────
+    review_df = pd.DataFrame(review_log)
+    counts    = review_df["Status"].value_counts()
 
-    print(f"\n{'─'*45}")
-    print(f"  AUTO_FILLED   : {filled_cnt}")
-    print(f"  NEEDS_REVIEW  : {review_cnt}")
-    print(f"{'─'*45}")
+    print(f"{'─'*48}")
+    print(f"  AUTO_FILLED    (high confidence) : {counts.get('AUTO_FILLED', 0):>5}")
+    print(f"  FILLED_REVIEW  (verify these)    : {counts.get('FILLED_REVIEW', 0):>5}")
+    print(f"  NO_MATCH       (manual needed)   : {counts.get('NO_MATCH', 0):>5}")
+    print(f"{'─'*48}")
 
-    if review_cnt:
-        print("\n  ⚠ Rows needing manual review:")
-        print(review_df[review_df["Status"] == "NEEDS_REVIEW"][[COL_ITEM, "Suggested_i3", "Confidence_Score"]].to_string(index=False))
+    # Show items needing attention
+    needs_attention = review_df[review_df["Status"].isin(["FILLED_REVIEW", "NO_MATCH"])]
+    if not needs_attention.empty:
+        print("\n⚠  Rows needing manual review:")
+        print(needs_attention[["Item", "Suggested_i3", "Confidence", "Status"]]
+              .to_string(index=False))
 
-    # ── 5. Save outputs ──────────────────────────────────────────────────────
+    # ── 6. Save ───────────────────────────────────────────────────────────────
     df.to_csv(OUTPUT_FILLED, index=False)
     review_df.to_csv(OUTPUT_REVIEW, index=False)
 
-    print(f"\n✅ Saved: {OUTPUT_FILLED}")
-    print(f"✅ Saved: {OUTPUT_REVIEW}  ← check this for manual review rows")
+    print(f"\n✅  {OUTPUT_FILLED}")
+    print(f"✅  {OUTPUT_REVIEW}  ← full audit trail with confidence scores")
 
 
 if __name__ == "__main__":
