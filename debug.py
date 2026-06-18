@@ -1,22 +1,35 @@
-Avg KPI Value Smart = 
+Avg KPI Target Smart = 
+VAR KPIType = SELECTEDVALUE(fact_quality[KPI Type])
+RETURN
 SWITCH(
-    SELECTEDVALUE(fact_quality[KPI Type]),
-    "Percentage", AVERAGEX(VALUES(fact_quality[Date_1]), MAX(fact_quality[Value])),
-    "Binary", AVERAGEX(VALUES(fact_quality[Date_1]), MAX(fact_quality[Value])),
-    "Count", SUMX(VALUES(fact_quality[Date_1]), MAX(fact_quality[Value]))
+    KPIType,
+    "Percentage", AVERAGEX(
+                    VALUES(fact_quality[Date_1]),
+                    [KPI Target Trend %]
+                  ),
+    "Binary",     AVERAGEX(
+                    VALUES(fact_quality[Date_1]),
+                    [KPI Target Trend Binary]
+                  ),
+    "Count",      MAX([KPI Target Trend Count])
 )
 
 
-Avg KPI Target Smart = 
+Avg KPI Value Smart = 
+VAR KPIType = SELECTEDVALUE(fact_quality[KPI Type])
+RETURN
 SWITCH(
-    SELECTEDVALUE(fact_quality[KPI Type]),
+    KPIType,
     "Percentage", AVERAGEX(
-                    VALUES(fact_quality[Date_1]), 
-                    MAX(dim_client_kpi_config[Target])
-                 ),
+                    VALUES(fact_quality[Date_1]),
+                    [KPI Value Trend %]
+                  ),
     "Binary",     AVERAGEX(
-                    VALUES(fact_quality[Date_1]), 
-                    MAX(dim_client_kpi_config[Target])
-                 ),
-    "Count",      MAX(dim_client_kpi_config[Target])
+                    VALUES(fact_quality[Date_1]),
+                    [KPI Value Trend Binary]
+                  ),
+    "Count",      SUMX(
+                    VALUES(fact_quality[Date_1]),
+                    [KPI Value Trend Count]
+                  )
 )
