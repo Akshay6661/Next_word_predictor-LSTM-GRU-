@@ -1,17 +1,22 @@
-Last Missed Date = 
-CALCULATE(
-    MAX(fact_quality[Date]),
-    fact_quality[Achievement Status Calc] = "Not Achieved"
-)
-
-
-Consecutive Misses = 
-VAR _currentDate = MAX(fact_quality[Date])
-VAR _clientKPI = MAX(fact_quality[KPI_ID]) & MAX(fact_quality[Client_Key])
+Value Aggregated = 
+VAR _type = SELECTEDVALUE(fact_quality[KPI Type])
 RETURN
-CALCULATE(
-    COUNTROWS(fact_quality),
-    fact_quality[Achievement Status Calc] = "Not Achieved",
-    fact_quality[Date] <= _currentDate,
-    ALLEXCEPT(fact_quality, fact_quality[Client_Key], fact_quality[KPI_ID])
+SWITCH(
+    TRUE(),
+    _type = "Count", SUM(fact_quality[Value]),
+    _type = "Percentage", AVERAGE(fact_quality[Value]),
+    _type = "Binary", AVERAGE(fact_quality[Value]),  -- shows as rate, format as %
+    BLANK()
+)
+Target Aggregated = 
+VAR _type = SELECTEDVALUE(fact_quality[KPI Type])
+VAR _minTarget = MIN(fact_quality[Target])
+VAR _maxTarget = MAX(fact_quality[Target])
+RETURN
+SWITCH(
+    TRUE(),
+    _type = "Count", _minTarget,
+    _type = "Percentage", _minTarget,
+    _type = "Binary", 1,  -- Binary target is always "met" = 1, no need to pull from data
+    BLANK()
 )
