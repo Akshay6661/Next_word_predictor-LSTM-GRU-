@@ -20,3 +20,12 @@ SWITCH(
     _type = "Binary", 1,  -- Binary target is always "met" = 1, no need to pull from data
     BLANK()
 )
+Target Inconsistent Flag = 
+VAR _minTarget = MIN(fact_quality[Target])
+VAR _maxTarget = MAX(fact_quality[Target])
+RETURN
+IF(_minTarget <> _maxTarget, "⚠ Target Varies", "OK")
+
+
+Achievement Gap = 
+[Value Aggregated] - [Target Aggregated]
