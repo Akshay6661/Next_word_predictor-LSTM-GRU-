@@ -1,38 +1,23 @@
 Achievement Status Calc = 
-VAR _type = RELATED(dim_kpi_master[KPI Type])
-VAR _direction = RELATED(dim_kpi_master[Direction])
-VAR _value = dim_quality[KPI_Value]
-VAR _target = dim_quality[Target]
+VAR _kpiid = fact_quality[KPI_ID]
+VAR _type = LOOKUPVALUE(dim_kpi_master[KPI Type], dim_kpi_master[KPI_ID], _kpiid)
+VAR _direction = LOOKUPVALUE(dim_kpi_master[Direction], dim_kpi_master[KPI_ID], _kpiid)
+VAR _value = fact_quality[Value]
+VAR _target = LOOKUPVALUE(dim_client_kpi_config[Target], dim_client_kpi_config[KPI_ID], _kpiid)
 RETURN
 SWITCH(
     TRUE(),
-
-    -- Binary: whole number 1/0, Met = 1
     _type = "Binary",
-        SWITCH(
-            TRUE(),
-            _value = 1, "Achieved",
-            _value = 0, "Not Achieved",
-            "Invalid Binary Value"
-        ),
-
-    -- Count: whole number comparison, Direction-aware, exact match fine (no float issue)
+        SWITCH(TRUE(), _value = 1, "Achieved", _value = 0, "Not Achieved", "Invalid Binary Value"),
     _type = "Count",
-        SWITCH(
-            TRUE(),
+        SWITCH(TRUE(),
             _direction = "Higher Better", IF(_value >= _target, "Achieved", "Not Achieved"),
             _direction = "Lower Better", IF(_value <= _target, "Achieved", "Not Achieved"),
-            "No Direction Set"
-        ),
-
-    -- Percentage: float, use ROUND to avoid floating-point precision issues (e.g. 0.899999999 vs 0.90)
+            "No Direction Set"),
     _type = "Percentage",
-        SWITCH(
-            TRUE(),
+        SWITCH(TRUE(),
             _direction = "Higher Better", IF(ROUND(_value,4) >= ROUND(_target,4), "Achieved", "Not Achieved"),
             _direction = "Lower Better", IF(ROUND(_value,4) <= ROUND(_target,4), "Achieved", "Not Achieved"),
-            "No Direction Set"
-        ),
-
+            "No Direction Set"),
     "Type Not Set"
 )
